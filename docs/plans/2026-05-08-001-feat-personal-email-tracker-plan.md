@@ -1531,7 +1531,7 @@ DOM-driven changes.
 
 ---
 
-- [ ] **Unit 7: Gmail History poller and cron-job.org driver**
+- [x] **Unit 7: Gmail History poller and cron-job.org driver**
 
 **Goal:** Periodically classify mobile/other-device self-opens by
 correlating Gmail's `users.history.list` (`labelRemoved` events with
