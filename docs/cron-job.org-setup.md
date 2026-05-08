@@ -81,8 +81,8 @@ These are the response shapes you may see; all are 200 unless noted.
 
 | Body                                          | Meaning                                                                                                  |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `{ok: true, baselined: true, ...}`            | First-run cursor seeded. Subsequent runs will classify.                                                  |
-| `{ok: true, hits_updated: N, ...}`            | Normal steady-state run; `N` pixel hits flipped to `self_view_mobile`.                                   |
+| `{ok: true, baselined: true, ...}`            | First-run cursor seeded. Subsequent runs will classify and drain.                                        |
+| `{ok: true, hits_updated: N, drained_pushes: M, ...}` | Normal steady-state run; `N` pixel hits flipped to `self_view_mobile`, `M` web pushes delivered. |
 | `{ok: true, rebaselined: true, ...}`          | Gmail returned 404 (cursor older than ~7 days); poller reset to current `historyId` and skipped this tick. |
 | `{skipped: true, reason: 'lock'}`             | Another invocation was running; this one harmlessly noop'd. Common after a slow upstream tick.           |
 | `{ok: false, reason: 'no_credentials'}`       | No `gmail_credentials` row yet; sign in via the dashboard.                                               |

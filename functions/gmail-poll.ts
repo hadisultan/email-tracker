@@ -25,9 +25,13 @@
 // old), the handler re-baselines from `users.getProfile` and skips
 // classification this tick.
 //
-// Drain step (Unit 8 — placeholder): the U7 handler reports
-// `drained_pushes: 0` and U8 will replace this with actual push
-// dispatch.
+// Drain step: after the classification transaction commits and the
+// advisory lock is released, the handler iterates `pixel_hits` rows
+// whose `notify_after` has elapsed and `tag` is still `'none'`, and
+// calls `sendPushesForHit` for each. The drain runs OUTSIDE the
+// transaction on purpose — a web-push HTTP failure must not roll back
+// the cursor advance. `gmail_poll_runs.drained_pushes` is updated
+// after the drain completes.
 
 import type { Context } from '@netlify/functions';
 import { withCors } from './lib/cors.js';
@@ -42,6 +46,7 @@ import {
   type HistoryRecord,
 } from './lib/gmail-api.js';
 import { extractUnreadRemovedThreadIds } from './lib/classify-mobile-self-views.js';
+import { sendPushesForHit } from './lib/notify.js';
 
 // Memorable, deterministic 32-bit constant. Postgres advisory locks are
 // global per database; this key namespaces the email-tracker poller so
@@ -63,6 +68,21 @@ interface CredsRow {
   last_history_id: string | null;
 }
 
+// Cap on hits drained per poll cycle. Generous for a personal account
+// (<50 hits/day) but a guardrail against a runaway state.
+const MAX_DRAIN_PER_CYCLE = 100;
+
+type TxOutcome =
+  | { kind: 'short_circuit'; response: Response }
+  | {
+      kind: 'success';
+      startedAt: string;
+      historyRecordsCount: number;
+      threadsClassified: number;
+      hitsUpdated: number;
+      newHistoryId: string;
+    };
+
 async function handler(req: Request, _ctx: Context): Promise<Response> {
   if (req.method !== 'POST') {
     return respondError('method_not_allowed', 'POST required', 405);
@@ -73,13 +93,17 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
 
   const sql = pgClient();
 
+  let outcome: TxOutcome;
   try {
-    return await sql.begin(async (tx) => {
+    outcome = await sql.begin<TxOutcome>(async (tx) => {
       const lockRows = await tx<{ locked: boolean }[]>`
         SELECT pg_try_advisory_xact_lock(${POLLER_LOCK_KEY}) AS locked
       `;
       if (!lockRows[0]?.locked) {
-        return respondJson({ skipped: true, reason: 'lock' });
+        return {
+          kind: 'short_circuit',
+          response: respondJson({ skipped: true, reason: 'lock' }),
+        };
       }
 
       const startedAt = new Date();
@@ -94,7 +118,10 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
           INSERT INTO public.gmail_poll_runs (started_at, finished_at, ok, error)
           VALUES (${startedAt.toISOString()}, now(), false, 'no_credentials')
         `;
-        return respondJson({ ok: false, reason: 'no_credentials' });
+        return {
+          kind: 'short_circuit',
+          response: respondJson({ ok: false, reason: 'no_credentials' }),
+        };
       }
       const cred = credRows[0]!;
       if (!cred.refresh_token) {
@@ -102,7 +129,10 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
           INSERT INTO public.gmail_poll_runs (started_at, finished_at, ok, error)
           VALUES (${startedAt.toISOString()}, now(), false, 'oauth_revoked')
         `;
-        return respondJson({ ok: false, reason: 'oauth_revoked' });
+        return {
+          kind: 'short_circuit',
+          response: respondJson({ ok: false, reason: 'oauth_revoked' }),
+        };
       }
 
       let accessToken = cred.access_token;
@@ -131,7 +161,10 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
             INSERT INTO public.gmail_poll_runs (started_at, finished_at, ok, error)
             VALUES (${startedAt.toISOString()}, now(), false, ${`oauth_revoked: ${msg}`.slice(0, 500)})
           `;
-          return respondJson({ ok: false, reason: 'oauth_revoked' });
+          return {
+            kind: 'short_circuit',
+            response: respondJson({ ok: false, reason: 'oauth_revoked' }),
+          };
         }
       }
 
@@ -148,7 +181,14 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
           INSERT INTO public.gmail_poll_runs (started_at, finished_at, ok, history_ids_processed, drained_pushes)
           VALUES (${startedAt.toISOString()}, now(), true, 0, 0)
         `;
-        return respondJson({ ok: true, baselined: true, history_id: profile.historyId });
+        return {
+          kind: 'short_circuit',
+          response: respondJson({
+            ok: true,
+            baselined: true,
+            history_id: profile.historyId,
+          }),
+        };
       }
 
       const expected = cred.last_history_id;
@@ -185,7 +225,14 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
               (started_at, finished_at, ok, history_ids_processed, drained_pushes, error)
             VALUES (${startedAt.toISOString()}, now(), true, 0, 0, 'rebaselined_after_404')
           `;
-          return respondJson({ ok: true, rebaselined: true, history_id: profile.historyId });
+          return {
+            kind: 'short_circuit',
+            response: respondJson({
+              ok: true,
+              rebaselined: true,
+              history_id: profile.historyId,
+            }),
+          };
         }
         throw err;
       }
@@ -231,27 +278,24 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
             (started_at, finished_at, ok, history_ids_processed, drained_pushes, error)
           VALUES (${startedAt.toISOString()}, now(), false, ${history.length}, 0, 'cursor_cas_failed')
         `;
-        return respondJson({ ok: false, reason: 'cursor_cas_failed' });
+        return {
+          kind: 'short_circuit',
+          response: respondJson({ ok: false, reason: 'cursor_cas_failed' }),
+        };
       }
 
-      // Push drain — Unit 8 wires the actual web-push send. For now,
-      // count is always 0 and the row is recorded with that.
-      const drainedPushes = 0;
-
-      await tx`
-        INSERT INTO public.gmail_poll_runs
-          (started_at, finished_at, ok, history_ids_processed, drained_pushes)
-        VALUES (${startedAt.toISOString()}, now(), true, ${history.length}, ${drainedPushes})
-      `;
-
-      return respondJson({
-        ok: true,
-        history_records: history.length,
-        threads_classified: threadIds.length,
-        hits_updated: updatedCount,
-        drained_pushes: drainedPushes,
-        new_history_id: newHistoryId,
-      });
+      // Success path: defer the run-row insert and the drain to AFTER
+      // the transaction commits. The advisory lock + cursor CAS are now
+      // safely persisted; subsequent web-push HTTP calls must not be
+      // able to roll them back.
+      return {
+        kind: 'success',
+        startedAt: startedAt.toISOString(),
+        historyRecordsCount: history.length,
+        threadsClassified: threadIds.length,
+        hitsUpdated: updatedCount,
+        newHistoryId,
+      };
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -271,6 +315,77 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
     }
     return respondError('internal_error', 'gmail poll failed', 500);
   }
+
+  if (outcome.kind === 'short_circuit') {
+    return outcome.response;
+  }
+
+  // Drain step. Runs OUTSIDE the transaction: a web-push failure must
+  // not roll back the cursor advance recorded above. The advisory lock
+  // is also released at this point — concurrent invocations are
+  // possible, but `sendPushesForHit`'s per-(message, hour) CAS on
+  // `messages.last_notified_at` prevents duplicate pushes.
+  let drainedPushes = 0;
+  try {
+    const readyHits = await sql<{ id: string }[]>`
+      SELECT id FROM public.pixel_hits
+      WHERE tag = 'none'
+        AND notified_at IS NULL
+        AND notify_after IS NOT NULL
+        AND notify_after < now()
+      ORDER BY notify_after ASC
+      LIMIT ${MAX_DRAIN_PER_CYCLE}
+    `;
+    for (const { id } of readyHits) {
+      try {
+        const result = await sendPushesForHit(sql, id);
+        drainedPushes += result.pushes_sent;
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            source: 'gmail-poll',
+            stage: 'drain',
+            hit_id: id,
+            err: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+    }
+  } catch (err) {
+    // Don't let a drain failure poison the run-row write below.
+    console.error(
+      JSON.stringify({
+        source: 'gmail-poll',
+        stage: 'drain-select',
+        err: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+
+  try {
+    await sql`
+      INSERT INTO public.gmail_poll_runs
+        (started_at, finished_at, ok, history_ids_processed, drained_pushes)
+      VALUES (${outcome.startedAt}, now(), true, ${outcome.historyRecordsCount}, ${drainedPushes})
+    `;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        source: 'gmail-poll',
+        stage: 'run-row-insert',
+        err: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+
+  return respondJson({
+    ok: true,
+    history_records: outcome.historyRecordsCount,
+    threads_classified: outcome.threadsClassified,
+    hits_updated: outcome.hitsUpdated,
+    drained_pushes: drainedPushes,
+    new_history_id: outcome.newHistoryId,
+  });
 }
 
 export default withCors(handler);

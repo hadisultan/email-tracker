@@ -1662,7 +1662,7 @@ Gmail API docs.
 
 ---
 
-- [ ] **Unit 8: Web Push composition and delivery (poller drain)**
+- [x] **Unit 8: Web Push composition and delivery (poller drain)**
 
 **Goal:** Provide the push-composition library that the poller calls
 during its drain step (Unit 7) for hits whose `notify_after` has

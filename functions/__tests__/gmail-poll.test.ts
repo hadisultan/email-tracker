@@ -3,11 +3,14 @@ import postgres, { type Sql } from 'postgres';
 import { LOCAL_DB_URL, SEED_USER_ID } from './db/helpers.js';
 import { computePollSignature } from '../lib/auth.js';
 import { _resetPgClientForTests } from '../lib/db.js';
+import { _resetVapidConfiguredForTests } from '../lib/push.js';
 
 // Env wiring — must be set before importing the handler. The OAuth
 // client id/secret are only used when the handler decides to refresh
 // the access token; tests that exercise the refresh path supply the
 // env via the same names. POLL_HMAC_SECRET drives the X-Signature.
+// VAPID env is needed for the drain step's web-push pipeline (mocked
+// at the `web-push` module boundary below).
 const LOCAL_SUPABASE_URL = 'http://127.0.0.1:54321';
 const LOCAL_SERVICE_ROLE_KEY = 'test-stub-service-role-key';
 
@@ -17,6 +20,25 @@ process.env.SUPABASE_DB_URL ??= LOCAL_DB_URL;
 process.env.POLL_HMAC_SECRET ??= 'test-poll-secret';
 process.env.GMAIL_OAUTH_CLIENT_ID ??= 'test-client-id.apps.googleusercontent.com';
 process.env.GMAIL_OAUTH_CLIENT_SECRET ??= 'test-client-secret';
+process.env.VAPID_PUBLIC_KEY ??= 'BNJ-test-vapid-public';
+process.env.VAPID_PRIVATE_KEY ??= 'test-vapid-private';
+process.env.VAPID_CONTACT ??= 'mailto:test@example.com';
+
+// Mock `web-push` at the module boundary so the drain step exercises
+// real notify.ts logic against the real DB but doesn't try to make
+// network requests.
+const webpushMocks = vi.hoisted(() => ({
+  sendNotification: vi.fn(),
+  setVapidDetails: vi.fn(),
+}));
+vi.mock('web-push', () => ({
+  default: {
+    sendNotification: webpushMocks.sendNotification,
+    setVapidDetails: webpushMocks.setVapidDetails,
+  },
+  sendNotification: webpushMocks.sendNotification,
+  setVapidDetails: webpushMocks.setVapidDetails,
+}));
 
 const { default: gmailPoll } = await import('../gmail-poll.js');
 
@@ -34,7 +56,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // Clean slate for each test.
+  webpushMocks.sendNotification.mockReset();
+  webpushMocks.setVapidDetails.mockReset();
+  _resetVapidConfiguredForTests();
   await sql`DELETE FROM public.pixel_hits WHERE message_id IN (SELECT id FROM public.messages WHERE user_id = ${SEED_USER_ID})`;
+  await sql`DELETE FROM public.push_subscriptions WHERE user_id = ${SEED_USER_ID}`;
   await sql`DELETE FROM public.messages WHERE user_id = ${SEED_USER_ID}`;
   await sql`DELETE FROM public.gmail_credentials WHERE user_id = ${SEED_USER_ID}`;
   await sql`DELETE FROM public.gmail_poll_runs`;
@@ -590,5 +616,160 @@ describe('gmail-poll handler — concurrency lock', () => {
 
     releaseHolder!();
     await lockPromise;
+  });
+});
+
+describe('gmail-poll handler — drain step (Unit 8)', () => {
+  it('drains a ready pixel_hit: sends 1 push, stamps notified_at, increments drained_pushes', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    const messageId = await seedMessage(
+      'thread-DRAIN',
+      new Date(Date.now() - 5 * 60_000).toISOString(),
+    );
+    // Hit is past its notify_after — drain-eligible.
+    const hitId = await seedPixelHit({
+      messageId,
+      hitAtIso: new Date(Date.now() - 3 * 60_000).toISOString(),
+      tag: 'none',
+      notifyAfterIso: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // Seed a push subscription for this user.
+    await sql`
+      INSERT INTO public.push_subscriptions (user_id, endpoint, p256dh, auth)
+      VALUES (
+        ${SEED_USER_ID},
+        ${'https://fcm.googleapis.com/fcm/send/drain-test'},
+        ${'p256dh-drain'},
+        ${'auth-drain'}
+      )
+    `;
+    // No history events this tick — drain runs on the existing pending hit.
+    installFetchMock({ historyPages: [{ history: [], historyId: '1000' }] });
+    webpushMocks.sendNotification.mockResolvedValueOnce({ statusCode: 201 });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      drained_pushes: number;
+      hits_updated: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.drained_pushes).toBe(1);
+
+    // web-push was invoked with the right payload shape.
+    expect(webpushMocks.sendNotification).toHaveBeenCalledTimes(1);
+    const args = webpushMocks.sendNotification.mock.calls[0]!;
+    expect(args[0]).toMatchObject({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/drain-test',
+      keys: { p256dh: 'p256dh-drain', auth: 'auth-drain' },
+    });
+    const payload = JSON.parse(args[1] as string) as {
+      title: string;
+      body: string;
+      data: { messageId: string; dashboardUrl: string };
+    };
+    expect(payload.data.messageId).toBe(messageId);
+    expect(payload.body).toContain('Opened just now');
+
+    // Hit is stamped, run row records the drain count.
+    const hitRows = await sql<{ notified_at: Date | null }[]>`
+      SELECT notified_at FROM public.pixel_hits WHERE id = ${hitId}
+    `;
+    expect(hitRows[0]!.notified_at).not.toBeNull();
+    const run = await lastPollRun();
+    expect(run?.ok).toBe(true);
+    expect(run?.drained_pushes).toBe(1);
+  });
+
+  it('does not drain hits whose notify_after is in the future', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    const messageId = await seedMessage(
+      'thread-PEND',
+      new Date(Date.now() - 30_000).toISOString(),
+    );
+    const hitId = await seedPixelHit({
+      messageId,
+      hitAtIso: new Date(Date.now() - 30_000).toISOString(),
+      tag: 'none',
+      notifyAfterIso: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await sql`
+      INSERT INTO public.push_subscriptions (user_id, endpoint, p256dh, auth)
+      VALUES (
+        ${SEED_USER_ID},
+        ${'https://fcm.googleapis.com/fcm/send/pending'},
+        ${'p256dh'},
+        ${'auth'}
+      )
+    `;
+    installFetchMock({ historyPages: [{ history: [], historyId: '1000' }] });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    const body = (await res.json()) as { drained_pushes: number };
+    expect(body.drained_pushes).toBe(0);
+    expect(webpushMocks.sendNotification).not.toHaveBeenCalled();
+
+    const rows = await sql<{ notified_at: Date | null }[]>`
+      SELECT notified_at FROM public.pixel_hits WHERE id = ${hitId}
+    `;
+    expect(rows[0]!.notified_at).toBeNull();
+  });
+
+  it('drain failure for one hit does not block subsequent hits in the same cycle', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    // Seed two messages in different hours so per-(message, hour) dedupe
+    // doesn't suppress the second push.
+    const m1 = await seedMessage('thread-A', new Date(Date.now() - 4 * 60_000).toISOString());
+    const m2 = await seedMessage('thread-B', new Date(Date.now() - 4 * 60_000).toISOString());
+    await seedPixelHit({
+      messageId: m1,
+      hitAtIso: new Date(Date.now() - 3 * 60_000).toISOString(),
+      tag: 'none',
+      notifyAfterIso: new Date(Date.now() - 120_000).toISOString(),
+    });
+    await seedPixelHit({
+      messageId: m2,
+      hitAtIso: new Date(Date.now() - 2 * 60_000).toISOString(),
+      tag: 'none',
+      notifyAfterIso: new Date(Date.now() - 60_000).toISOString(),
+    });
+    await sql`
+      INSERT INTO public.push_subscriptions (user_id, endpoint, p256dh, auth)
+      VALUES (
+        ${SEED_USER_ID},
+        ${'https://fcm.googleapis.com/fcm/send/two-hits'},
+        ${'p256dh'},
+        ${'auth'}
+      )
+    `;
+    installFetchMock({ historyPages: [{ history: [], historyId: '1000' }] });
+    // First sub call throws, second succeeds.
+    webpushMocks.sendNotification
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ statusCode: 201 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await gmailPoll(postPoll(), ctx);
+    const body = (await res.json()) as { ok: boolean; drained_pushes: number };
+    expect(body.ok).toBe(true);
+    expect(body.drained_pushes).toBe(1);
+    expect(webpushMocks.sendNotification).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
   });
 });
