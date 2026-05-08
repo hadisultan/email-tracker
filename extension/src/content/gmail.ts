@@ -1,5 +1,6 @@
 // Content-script orchestrator. Wires Gmail compose dialogs to the
-// pure compose-handler. The pieces:
+// pure compose-handler, and Gmail thread views to the self-view
+// beacon. The pieces:
 //
 //   1. MutationObserver on document.body discovers compose dialogs as
 //      Gmail mounts them. Each new compose dialog gets a capture-phase
@@ -16,6 +17,13 @@
 //      through by removing our own listener for the duration of the
 //      dispatch; the inFlightSends sentinel guards against the rare
 //      click+keydown double-fire on the user's side.
+//
+//   4. A `hashchange` listener (and an initial check on startup) calls
+//      `detectSelfThreadView` against `location.hash`. When it matches
+//      a sent-thread URL and `shouldBeacon` allows it (5s per-thread
+//      throttle), the orchestrator posts to `/api/beacon`. The
+//      timestamp is recorded before the network call to make rapid
+//      hashchange storms idempotent under throttle.
 
 import {
   findBodyEditor,
@@ -29,11 +37,15 @@ import {
   type HandleComposeSendInput,
   type MintFn,
 } from './compose-handler.js';
-import { mint } from '../lib/api.js';
+import { detectSelfThreadView } from './thread-detect.js';
+import { shouldBeacon } from './beacon-handler.js';
+import { mint, beacon as beaconFn } from '../lib/api.js';
 
 const hookedSendButtons = new WeakSet<HTMLElement>();
 const hookedDialogs = new WeakSet<HTMLElement>();
 const inFlightSends = new WeakSet<HTMLElement>();
+
+const lastBeaconedAt: Record<string, number> = {};
 
 interface DialogBindings {
   dialog: HTMLElement;
@@ -49,6 +61,9 @@ const defaultMintFn: MintFn = async (body, idemKey, signal) => {
   const result = await mint(body, idemKey, signal);
   return { token: result.token, pixel_url: result.pixel_url };
 };
+
+export type BeaconFn = (threadId: string) => Promise<void>;
+const defaultBeaconFn: BeaconFn = (threadId) => beaconFn(threadId);
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -163,11 +178,52 @@ export function hookDialog(
 }
 
 let observer: MutationObserver | null = null;
+let hashListener: (() => void) | null = null;
 
-export function startObserver(opts: { mintFn?: MintFn } = {}): void {
+export interface StartObserverOptions {
+  mintFn?: MintFn;
+  beaconFn?: BeaconFn;
+  now?: () => number;
+}
+
+async function maybeBeaconCurrentView(opts: {
+  beaconFn: BeaconFn;
+  now: () => number;
+}): Promise<void> {
+  if (typeof location === 'undefined') return;
+  const detected = detectSelfThreadView(location);
+  if (!detected) return;
+  const nowMs = opts.now();
+  if (!shouldBeacon({ threadId: detected.threadId, lastBeaconedAt, now: nowMs })) {
+    return;
+  }
+  // Optimistically record the timestamp BEFORE the network call so a
+  // rapid hashchange storm (Gmail sometimes fires multiple) doesn't
+  // dispatch parallel beacons. If the call fails we leave the record in
+  // place — re-trying on the next hashchange would be re-throttled
+  // anyway, and the periodic poller (Unit 7) is the durable fallback.
+  lastBeaconedAt[detected.threadId] = nowMs;
+  try {
+    await opts.beaconFn(detected.threadId);
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        source: 'email-tracker',
+        stage: 'self-view-beacon',
+        thread_id: detected.threadId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export function startObserver(opts: StartObserverOptions = {}): void {
   if (observer || typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
     return;
   }
+  const beaconImpl = opts.beaconFn ?? defaultBeaconFn;
+  const nowImpl = opts.now ?? (() => Date.now());
+
   for (const dialog of findComposeDialogs(document)) {
     hookDialog(dialog, opts);
   }
@@ -177,12 +233,27 @@ export function startObserver(opts: { mintFn?: MintFn } = {}): void {
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // Self-view detection. Initial-load check covers the case where the
+  // user navigates straight to a thread URL (e.g., from a notification
+  // or a direct link). hashchange covers in-app navigation.
+  void maybeBeaconCurrentView({ beaconFn: beaconImpl, now: nowImpl });
+  if (typeof window !== 'undefined') {
+    hashListener = (): void => {
+      void maybeBeaconCurrentView({ beaconFn: beaconImpl, now: nowImpl });
+    };
+    window.addEventListener('hashchange', hashListener);
+  }
 }
 
 export function stopObserver(): void {
   if (observer) {
     observer.disconnect();
     observer = null;
+  }
+  if (hashListener && typeof window !== 'undefined') {
+    window.removeEventListener('hashchange', hashListener);
+    hashListener = null;
   }
 }
 
@@ -191,6 +262,8 @@ export const _internals = {
   hookedDialogs,
   inFlightSends,
   dialogBindings,
+  lastBeaconedAt,
+  maybeBeaconCurrentView,
 };
 
 declare const chrome: { runtime?: { id?: string } } | undefined;

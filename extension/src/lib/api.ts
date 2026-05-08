@@ -134,17 +134,35 @@ export async function mint(body: MintBody, idempotencyKey: string, signal?: Abor
   return { token: parsed.token, pixel_url: parsed.pixel_url };
 }
 
-// === U6c stubs ===
+// === U6c: real beacon() ===
 
-export async function beacon(_gmailThreadId: string): Promise<void> {
-  throw new Error('beacon() is implemented in U6c');
+export async function beacon(gmailThreadId: string, signal?: AbortSignal): Promise<void> {
+  const init = await withAuth({
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ gmail_thread_id: gmailThreadId }),
+  });
+  const res = await fetch(`${apiBase()}/api/beacon`, { ...init, signal });
+  if (!res.ok) {
+    if (res.status === 401) {
+      await clearStoredToken().catch(() => undefined);
+    }
+    throw await parseError(res);
+  }
+  // Backend returns 204 No Content on success (and on foreign-thread
+  // silent-drop). No response body to parse.
 }
 
+// pushSubscribe is implemented by the dashboard (Unit 9), not the
+// extension — Web Push is registered against the dashboard origin where
+// the user grants permission. This stub remains so call sites that
+// reach for it from the extension fail loudly instead of silently
+// no-op'ing.
 export interface PushSubscribeBody {
   endpoint: string;
   keys: { p256dh: string; auth: string };
 }
 
 export async function pushSubscribe(_body: PushSubscribeBody): Promise<void> {
-  throw new Error('pushSubscribe() is implemented in U6c');
+  throw new Error('pushSubscribe() is owned by the dashboard, not the extension');
 }

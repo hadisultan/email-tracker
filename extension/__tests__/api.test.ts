@@ -234,16 +234,82 @@ describe('mint (U6b)', () => {
   });
 });
 
-describe('U6c stubs', () => {
-  it('beacon() throws (implemented in U6c)', async () => {
-    const { beacon } = await import('../src/lib/api.js');
-    await expect(beacon('thread-1')).rejects.toThrow(/U6c/);
+describe('beacon (U6c)', () => {
+  it('POSTs to /api/beacon with bearer + JSON body and resolves on 204', async () => {
+    const { setStoredToken, beacon } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(new Response(null, { status: 204 }) as never);
+
+    await beacon('thread-123');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8888/api/beacon');
+    const reqInit = init as RequestInit & { headers: Record<string, string> };
+    expect(reqInit.method).toBe('POST');
+    expect(reqInit.headers['Authorization']).toBe('Bearer et_authed');
+    expect(reqInit.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(reqInit.body as string)).toEqual({
+      gmail_thread_id: 'thread-123',
+    });
   });
 
-  it('pushSubscribe() throws (implemented in U6c)', async () => {
+  it('throws ApiError(401, no_token) when not paired', async () => {
+    const { beacon, ApiError } = await import('../src/lib/api.js');
+    await expect(beacon('thread-1')).rejects.toBeInstanceOf(ApiError);
+    await expect(beacon('thread-1')).rejects.toMatchObject({
+      status: 401,
+      code: 'no_token',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears the stored token when the server returns 401', async () => {
+    const { setStoredToken, beacon, getStoredToken } = await import(
+      '../src/lib/api.js'
+    );
+    await setStoredToken('et_stale');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(401, { error: { code: 'unauthorized', message: 'bad token' } }) as never,
+    );
+
+    await expect(beacon('thread-1')).rejects.toMatchObject({ status: 401 });
+    expect(await getStoredToken()).toBeNull();
+  });
+
+  it('throws ApiError on 5xx without clearing the token', async () => {
+    const { setStoredToken, beacon, getStoredToken } = await import(
+      '../src/lib/api.js'
+    );
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(500, {
+        error: { code: 'internal_error', message: 'oops' },
+      }) as never,
+    );
+    await expect(beacon('thread-1')).rejects.toMatchObject({
+      status: 500,
+      code: 'internal_error',
+    });
+    expect(await getStoredToken()).toBe('et_authed');
+  });
+
+  it('forwards an AbortSignal to fetch', async () => {
+    const { setStoredToken, beacon } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(new Response(null, { status: 204 }) as never);
+    const ac = new AbortController();
+    await beacon('thread-1', ac.signal);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect((init as RequestInit).signal).toBe(ac.signal);
+  });
+});
+
+describe('pushSubscribe (dashboard-owned)', () => {
+  it('throws — not implemented in the extension', async () => {
     const { pushSubscribe } = await import('../src/lib/api.js');
     await expect(
       pushSubscribe({ endpoint: 'x', keys: { p256dh: 'a', auth: 'b' } }),
-    ).rejects.toThrow(/U6c/);
+    ).rejects.toThrow(/dashboard/);
   });
 });

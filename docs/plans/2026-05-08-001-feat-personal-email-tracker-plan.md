@@ -1458,7 +1458,7 @@ pattern from extension community references.
 
 ---
 
-- [ ] **Unit 6c: Chrome extension self-view beacon**
+- [x] **Unit 6c: Chrome extension self-view beacon**
 
 **Goal:** Detect when the user opens their own sent threads on desktop
 Gmail and beacon those events so the pixel handler can tag concurrent
