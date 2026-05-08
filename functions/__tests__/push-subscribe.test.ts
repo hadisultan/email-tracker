@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import postgres, { type Sql } from 'postgres';
 import { LOCAL_DB_URL, SEED_USER_ID } from './db/helpers.js';
-import { _resetServiceRoleClientForTests } from '../lib/supabase.js';
+import { _resetServiceRoleClientForTests, _setAuthClientForTests } from '../lib/supabase.js';
 import { sha256Hex } from '../lib/auth.js';
 
 const LOCAL_SUPABASE_URL = 'http://127.0.0.1:54321';
@@ -10,12 +10,25 @@ const LOCAL_SERVICE_ROLE_KEY = 'test-stub-service-role-key';
 process.env.SUPABASE_URL ??= LOCAL_SUPABASE_URL;
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= LOCAL_SERVICE_ROLE_KEY;
 process.env.SUPABASE_DB_URL ??= LOCAL_DB_URL;
+process.env.OWNER_EMAIL_ALLOWLIST = 'owner@example.com';
 
 const { default: pushSubscribe } = await import('../push-subscribe.js');
 
 const TOKEN = 'et_test-push-token';
 const TOKEN_HASH = sha256Hex(TOKEN);
 const ENDPOINT = 'https://fcm.googleapis.com/fcm/send/test-endpoint-zzz';
+const OWNER_EMAIL = 'owner@example.com';
+const NON_OWNER_EMAIL = 'rando@example.com';
+
+const fakeAuthClient = (user: { id: string; email: string } | null) =>
+  ({
+    auth: {
+      getUser: async (_jwt: string) =>
+        user
+          ? { data: { user }, error: null }
+          : { data: { user: null }, error: { message: 'invalid' } },
+    },
+  } as never);
 
 let sql: Sql;
 const ctx = {} as never;
@@ -30,6 +43,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   _resetServiceRoleClientForTests();
+  _setAuthClientForTests(fakeAuthClient({ id: SEED_USER_ID, email: OWNER_EMAIL }));
   await sql`
     INSERT INTO public.service_tokens (user_id, token_hash, label)
     VALUES (${SEED_USER_ID}, ${TOKEN_HASH}, 'push-test')
@@ -42,15 +56,16 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  _setAuthClientForTests(null);
   await sql`DELETE FROM public.push_subscriptions WHERE user_id = ${SEED_USER_ID}`;
   await sql`DELETE FROM public.service_tokens WHERE user_id = ${SEED_USER_ID}`;
 });
 
-function postSub(body: unknown): Request {
+function postSub(body: unknown, token = TOKEN): Request {
   return new Request('http://localhost/api/push-subscribe', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${TOKEN}`,
+      Authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -137,5 +152,36 @@ describe('push-subscribe handler', () => {
     const t2 = after[0]!.last_used_at;
     expect(t2).not.toBeNull();
     expect(t2!.getTime()).toBeGreaterThan(t1!.getTime());
+  });
+
+  it('accepts a Supabase JWT for the dashboard subscribe path', async () => {
+    // JWT-shaped token (no et_ prefix) routes through requireUserJwt.
+    // The fake auth client returns the seed user with the owner email.
+    const res = await pushSubscribe(postSub(VALID_BODY, 'eyJabc.def.ghi'), ctx);
+    expect(res.status).toBe(200);
+
+    const rows = await sql<{ endpoint: string; user_id: string }[]>`
+      SELECT endpoint, user_id FROM public.push_subscriptions WHERE user_id = ${SEED_USER_ID}
+    `;
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.endpoint).toBe(ENDPOINT);
+    expect(rows[0]!.user_id).toBe(SEED_USER_ID);
+  });
+
+  it('rejects a JWT whose email is not in the owner allowlist', async () => {
+    _setAuthClientForTests(fakeAuthClient({ id: SEED_USER_ID, email: NON_OWNER_EMAIL }));
+    const res = await pushSubscribe(postSub(VALID_BODY, 'eyJabc.def.ghi'), ctx);
+    expect(res.status).toBe(403);
+
+    const rows = await sql<{ endpoint: string }[]>`
+      SELECT endpoint FROM public.push_subscriptions WHERE user_id = ${SEED_USER_ID}
+    `;
+    expect(rows.length).toBe(0);
+  });
+
+  it('rejects a JWT that fails verification (401)', async () => {
+    _setAuthClientForTests(fakeAuthClient(null));
+    const res = await pushSubscribe(postSub(VALID_BODY, 'eyJbad.token.value'), ctx);
+    expect(res.status).toBe(401);
   });
 });

@@ -1,15 +1,20 @@
 // POST /api/push-subscribe
 //
-// Service-token gated. Stores (or refreshes) the caller's Web-Push
-// subscription. Keyed by `endpoint` (UNIQUE) — if the browser re-subscribes
-// after a VAPID rotation or push-permission change, the keys (`p256dh`,
-// `auth`) MUST be overwritten, otherwise every push fails silently with
-// stale crypto. We always rewrite p256dh, auth, user_id, and last_used_at
-// on conflict.
+// Stores (or refreshes) the caller's Web-Push subscription. Keyed by
+// `endpoint` (UNIQUE) — if the browser re-subscribes after a VAPID
+// rotation or push-permission change, the keys (`p256dh`, `auth`) MUST
+// be overwritten, otherwise every push fails silently with stale crypto.
+// We always rewrite p256dh, auth, user_id, and last_used_at on conflict.
+//
+// Dual-auth: accepts EITHER an extension service token (prefixed `et_`)
+// OR a dashboard Supabase JWT. Service tokens are tied 1:1 to a user
+// row at creation time; JWTs additionally pass through the owner
+// allowlist check so a hostile non-owner JWT can't add a subscription
+// even on the single-user instance.
 
 import type { Context } from '@netlify/functions';
 import { withCors } from './lib/cors.js';
-import { requireServiceToken } from './lib/auth.js';
+import { isOwnerEmail, requireServiceToken, requireUserJwt } from './lib/auth.js';
 import { respondError, respondJson } from './lib/respond.js';
 import { serviceRoleClient } from './lib/supabase.js';
 
@@ -38,8 +43,29 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
     return respondError('method_not_allowed', 'POST required', 405);
   }
 
-  const auth = await requireServiceToken(req);
-  if (!auth.ok) return auth.response;
+  // Pick auth path by token prefix. Extension service tokens are
+  // minted with the `et_` prefix (see auth.ts:generateServiceToken);
+  // anything else is treated as a Supabase JWT. An empty/missing
+  // bearer is rejected here so both auth paths produce a consistent
+  // 401 instead of leaking which path was attempted.
+  const header = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  const bearer = header?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? '';
+  if (bearer.length === 0) {
+    return respondError('invalid_token', 'missing Authorization bearer token', 401);
+  }
+  let userId: string;
+  if (bearer.startsWith('et_')) {
+    const auth = await requireServiceToken(req);
+    if (!auth.ok) return auth.response;
+    userId = auth.data.userId;
+  } else {
+    const auth = await requireUserJwt(req);
+    if (!auth.ok) return auth.response;
+    if (!isOwnerEmail(auth.data.email)) {
+      return respondError('not_authorized', 'email not in owner allowlist', 403);
+    }
+    userId = auth.data.userId;
+  }
 
   let body: Body | null;
   try {
@@ -58,7 +84,7 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
     .from('push_subscriptions')
     .upsert(
       {
-        user_id: auth.data.userId,
+        user_id: userId,
         endpoint: body.endpoint,
         p256dh: body.keys.p256dh,
         auth: body.keys.auth,

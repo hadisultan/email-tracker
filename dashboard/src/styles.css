@@ -1,0 +1,52 @@
+/* Mobile-first dashboard styles. Single stylesheet to keep the deploy
+   surface tiny — most components render with inline `style` props for
+   correctness over aesthetics. This file owns root + reset rules. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: #1d4ed8;
+}
+
+button,
+a {
+  /* Tap-target floor for iOS/Android (R-mobile-first). Components also
+     set this directly via inline `style`; keeping the rule here is a
+     belt-and-braces guard for any new control that forgets it. */
+  min-height: 44px;
+}
+
+ul {
+  padding-left: 0;
+}
+
+@media (min-width: 768px) {
+  main {
+    font-size: 17px;
+  }
+}

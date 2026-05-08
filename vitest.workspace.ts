@@ -31,6 +31,7 @@ export default defineWorkspace([
       name: 'dashboard',
       environment: 'jsdom',
       include: ['dashboard/__tests__/**/*.test.{ts,tsx}'],
+      setupFiles: ['dashboard/__tests__/setup.ts'],
     },
   },
 ]);

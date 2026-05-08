@@ -1759,7 +1759,7 @@ HTTP endpoint** — the poller drain is the single push path.
 
 ---
 
-- [ ] **Unit 9: Dashboard UI**
+- [x] **Unit 9: Dashboard UI**
 
 **Goal:** Static React dashboard hosted on Netlify CDN. Single sign-in
 with Google via Supabase, message list with opens timeline, system
