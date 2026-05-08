@@ -864,7 +864,7 @@ controlled.
 
 ---
 
-- [ ] **Unit 3: Pixel endpoint and event capture**
+- [x] **Unit 3: Pixel endpoint and event capture**
 
 **Goal:** Public, unauthenticated endpoint that returns a 1×1 transparent
 GIF for every request to `/pixel/:token` and records a `pixel_hits` row

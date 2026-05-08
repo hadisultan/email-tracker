@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@netlify/functions": "^2.8.2",
+    "@supabase/supabase-js": "^2.105.4",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
