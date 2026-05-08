@@ -972,7 +972,7 @@ with full metadata, classifying the tag inline.
 
 ---
 
-- [ ] **Unit 4: OAuth bootstrap, service-token issuance, and refresh-token storage**
+- [x] **Unit 4: OAuth bootstrap, service-token issuance, and refresh-token storage**
 
 **Goal:** Provide the auth foundation everything else depends on: Supabase
 Google OAuth with offline access for the dashboard, capture of the Gmail

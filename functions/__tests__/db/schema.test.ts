@@ -194,13 +194,20 @@ describe('schema: tag column accepts arbitrary values (no CHECK constraint)', ()
 
 describe('schema: drain partial index is used by EXPLAIN', () => {
   it("uses pixel_hits_drain_idx for tag='none' AND notified_at IS NULL", async () => {
-    const plan = await sql<{ ['QUERY PLAN']: string }[]>`
-      EXPLAIN
-      SELECT id FROM public.pixel_hits
-      WHERE tag = 'none'
-        AND notified_at IS NULL
-        AND notify_after < now()
-    `;
+    // Force planner to prefer index access. With a near-empty pixel_hits
+    // table the planner sometimes picks Seq Scan; we only care that the
+    // partial index *is usable* by this query, so disable seq scan in
+    // a tx.
+    const plan = await sql.begin(async (tx) => {
+      await tx`SET LOCAL enable_seqscan = off`;
+      return tx<{ ['QUERY PLAN']: string }[]>`
+        EXPLAIN
+        SELECT id FROM public.pixel_hits
+        WHERE tag = 'none'
+          AND notified_at IS NULL
+          AND notify_after < now()
+      `;
+    });
     const text = plan.map((r) => r['QUERY PLAN']).join('\n');
     expect(text).toMatch(/pixel_hits_drain_idx/);
   });
