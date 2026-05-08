@@ -2,7 +2,9 @@
 # db/reset.sh — local-dev DB wipe + re-apply all migrations.
 #
 # Local: rewinds the local Supabase Postgres and re-applies every migration in
-# db/migrations/ from scratch. Requires Docker Desktop + the Supabase CLI.
+# supabase/migrations/ from scratch. Requires Docker Desktop + the Supabase CLI.
+# (The plan calls them "db/migrations/" but the Supabase CLI requires the
+# supabase/ path; see db/README.md.)
 #
 #   $ ./db/reset.sh
 #

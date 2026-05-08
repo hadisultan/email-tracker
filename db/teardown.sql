@@ -18,10 +18,12 @@ DROP VIEW IF EXISTS public.system_health CASCADE;
 -- readability.
 DROP TABLE IF EXISTS public.pixel_hits CASCADE;
 DROP TABLE IF EXISTS public.messages CASCADE;
+DROP TABLE IF EXISTS public.self_view_beacons CASCADE;
 DROP TABLE IF EXISTS public.push_subscriptions CASCADE;
 DROP TABLE IF EXISTS public.gmail_credentials CASCADE;
 DROP TABLE IF EXISTS public.service_tokens CASCADE;
 DROP TABLE IF EXISTS public.pairing_codes CASCADE;
 DROP TABLE IF EXISTS public.gmail_poll_runs CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
 
 COMMIT;

@@ -141,5 +141,5 @@ Every variable lives in [`.env.example`](./.env.example) with a comment explaini
 
 ## Schema iteration workflow
 
-- During Units 2–9, migrations in `db/migrations/` are **rewritable**. Use `./db/reset.sh` for local wipes and `psql -f db/teardown.sql` + `supabase db push` for cloud wipes.
+- During Units 2–9, migrations in `supabase/migrations/` are **rewritable** (see `db/README.md` for why migrations live under `supabase/` rather than `db/migrations/` as the plan called for). Use `./db/reset.sh` for local wipes and `psql -f db/teardown.sql` + `supabase db push` for cloud wipes.
 - After Unit 9 verification, migrations become **append-only**. Update this section to record the transition.

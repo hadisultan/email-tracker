@@ -707,7 +707,7 @@ first build's success in Unit 9 as indirect verification.
 
 ---
 
-- [ ] **Unit 2: Database schema, migrations, and RLS**
+- [x] **Unit 2: Database schema, migrations, and RLS**
 
 **Goal:** Define every table the system needs, with row-level security
 policies so the anon-key-using dashboard cannot see other users' data
