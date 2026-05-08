@@ -7,6 +7,7 @@ import { OpensTimeline, type PixelHit } from './OpensTimeline.js';
 import { MultiRecipientNotice } from './MultiRecipientNotice.js';
 import { GmailCachingNotice } from './GmailCachingNotice.js';
 import { AppleMPPNotice } from './AppleMPPNotice.js';
+import type { Filter } from '../types.js';
 
 export interface MessageSummary {
   id: string;
@@ -16,8 +17,6 @@ export interface MessageSummary {
   created_at: string;
   hit_count: number;
 }
-
-type Filter = 'real' | 'all' | 'hidden';
 
 interface Props {
   message: MessageSummary;

@@ -114,6 +114,38 @@ describe('HealthBanner', () => {
     expect(onResub).toHaveBeenCalledOnce();
   });
 
+  it('flags pixel-hit staleness as informational when last open is older than 7 days', () => {
+    const stale: SystemHealth = {
+      ...HEALTHY_HEALTH,
+      last_pixel_hit_at: new Date(NOW - 10 * 24 * 60 * 60_000).toISOString(),
+    };
+    render(<HealthBanner health={stale} hasPushSubscription={false} />);
+    const issue = screen.getByTestId('health-issue-pixel-hit-stale');
+    expect(issue).toHaveTextContent(/No tracked email has been opened in 10 days/i);
+    // Severity is informational, not error — surfaced via the data-severity
+    // attribute so the palette diverges from the red error banners.
+    expect(issue).toHaveAttribute('data-severity', 'info');
+    // No CTA — user can't manually fix this; it's diagnostic only.
+    expect(issue.querySelector('button')).toBeNull();
+  });
+
+  it('does not flag pixel-hit staleness when last open is within 7 days', () => {
+    const recent: SystemHealth = {
+      ...HEALTHY_HEALTH,
+      last_pixel_hit_at: new Date(NOW - 6 * 24 * 60 * 60_000).toISOString(),
+    };
+    render(<HealthBanner health={recent} hasPushSubscription={false} />);
+    expect(screen.queryByTestId('health-issue-pixel-hit-stale')).toBeNull();
+  });
+
+  it('does not flag pixel-hit staleness when last_pixel_hit_at is null (no opens yet)', () => {
+    const never: SystemHealth = { ...HEALTHY_HEALTH, last_pixel_hit_at: null };
+    render(<HealthBanner health={never} hasPushSubscription={false} />);
+    // Skipping the "never" case avoids alarming users on first sign-in
+    // before any tracked email has actually been opened.
+    expect(screen.queryByTestId('health-issue-pixel-hit-stale')).toBeNull();
+  });
+
   it('stacks multiple unhealthy signals as separate sub-banners', () => {
     const broken: SystemHealth = {
       ...HEALTHY_HEALTH,

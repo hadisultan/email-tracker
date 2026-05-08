@@ -142,7 +142,7 @@ describe('service worker', () => {
     expect(sw.clients.openWindow).toHaveBeenCalledWith('/messages/m-1');
   });
 
-  it('focuses an existing client whose URL ends in dashboardUrl rather than opening a new window', async () => {
+  it('focuses an existing client whose pathname matches dashboardUrl rather than opening a new window', async () => {
     const focus = vi.fn();
     mockClients = [{ url: 'https://app/messages/m-1', focus }];
     const event = makeNotificationEvent({
@@ -155,9 +155,50 @@ describe('service worker', () => {
     expect(sw.clients.openWindow).not.toHaveBeenCalled();
   });
 
+  it('does not match a client whose URL has the target as a path suffix on a different route (path-collision regression)', async () => {
+    // `/admin/messages/m-1` ends with `/messages/m-1` but is a different
+    // route. The previous endsWith() implementation falsely matched
+    // here; the pathname-equality check prevents that.
+    const focus = vi.fn();
+    mockClients = [{ url: 'https://app/admin/messages/m-1', focus }];
+    const event = makeNotificationEvent({
+      messageId: 'm-1',
+      dashboardUrl: '/messages/m-1',
+    });
+    await sw.trigger('notificationclick', event);
+    await event._flush();
+    expect(focus).not.toHaveBeenCalled();
+    expect(sw.clients.openWindow).toHaveBeenCalledWith('/messages/m-1');
+  });
+
   it('falls back to "/" when notification data is missing dashboardUrl', async () => {
     mockClients = [];
     const event = makeNotificationEvent(null);
+    await sw.trigger('notificationclick', event);
+    await event._flush();
+    expect(sw.clients.openWindow).toHaveBeenCalledWith('/');
+  });
+
+  it('rejects protocol-relative dashboardUrl values that would escape the dashboard origin', async () => {
+    // `//attacker.com` is parsed by browsers as `https://attacker.com`,
+    // which would let a poisoned push payload phish via clients.openWindow.
+    // Validate the URL is a same-origin absolute path before using it.
+    mockClients = [];
+    const event = makeNotificationEvent({
+      messageId: 'm-1',
+      dashboardUrl: '//attacker.com/messages/m-1',
+    });
+    await sw.trigger('notificationclick', event);
+    await event._flush();
+    expect(sw.clients.openWindow).toHaveBeenCalledWith('/');
+  });
+
+  it('rejects absolute http(s) dashboardUrl values', async () => {
+    mockClients = [];
+    const event = makeNotificationEvent({
+      messageId: 'm-1',
+      dashboardUrl: 'https://attacker.com/messages/m-1',
+    });
     await sw.trigger('notificationclick', event);
     await event._flush();
     expect(sw.clients.openWindow).toHaveBeenCalledWith('/');

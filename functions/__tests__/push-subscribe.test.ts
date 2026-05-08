@@ -88,6 +88,39 @@ describe('push-subscribe handler', () => {
     expect(res.status).toBe(401);
   });
 
+  it('returns 401 when Authorization header is "Bearer " with empty token after trim', async () => {
+    // The empty-bearer guard must reject before either auth path runs;
+    // otherwise requireUserJwt would receive an empty token and return
+    // its own 401 with a different error code, leaking which path was
+    // attempted.
+    const req = new Request('http://localhost/api/push-subscribe', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer    ',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(VALID_BODY),
+    });
+    const res = await pushSubscribe(req, ctx);
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe('invalid_token');
+  });
+
+  it('routes case-insensitively on the et_ prefix (ET_, eT_) so a hypothetical mixed-case token still hits the service-token path)', async () => {
+    // generateServiceToken always lowercases the prefix, but the
+    // Bearer-extraction regex is case-insensitive — keep the prefix
+    // check consistent so a hand-crafted ET_ token doesn't silently
+    // hit the JWT path.
+    await sql`
+      INSERT INTO public.service_tokens (user_id, token_hash, label)
+      VALUES (${SEED_USER_ID}, ${sha256Hex('ET_uppercase-test')}, 'upper-test')
+      ON CONFLICT (token_hash) DO NOTHING
+    `;
+    const res = await pushSubscribe(postSub(VALID_BODY, 'ET_uppercase-test'), ctx);
+    expect(res.status).toBe(200);
+  });
+
   it('returns 400 for missing endpoint', async () => {
     const res = await pushSubscribe(
       postSub({ keys: { p256dh: 'a', auth: 'b' } }),

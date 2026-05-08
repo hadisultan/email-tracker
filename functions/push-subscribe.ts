@@ -47,14 +47,17 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
   // minted with the `et_` prefix (see auth.ts:generateServiceToken);
   // anything else is treated as a Supabase JWT. An empty/missing
   // bearer is rejected here so both auth paths produce a consistent
-  // 401 instead of leaking which path was attempted.
+  // 401 instead of leaking which path was attempted. The prefix check
+  // is case-insensitive to match the case-insensitive Bearer-header
+  // regex on the line above — otherwise a hypothetical `ET_…` token
+  // would silently route to the JWT path.
   const header = req.headers.get('authorization') ?? req.headers.get('Authorization');
   const bearer = header?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? '';
   if (bearer.length === 0) {
     return respondError('invalid_token', 'missing Authorization bearer token', 401);
   }
   let userId: string;
-  if (bearer.startsWith('et_')) {
+  if (bearer.toLowerCase().startsWith('et_')) {
     const auth = await requireServiceToken(req);
     if (!auth.ok) return auth.response;
     userId = auth.data.userId;

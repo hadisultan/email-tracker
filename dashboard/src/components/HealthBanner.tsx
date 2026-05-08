@@ -26,6 +26,7 @@ interface Props {
 
 const POLL_STALE_MS = 30 * 60_000;
 const PUSH_STALE_MS = 24 * 60 * 60_000;
+const PIXEL_HIT_STALE_MS = 7 * 24 * 60 * 60_000;
 
 function ageMs(iso: string | null, now: number): number | null {
   if (!iso) return null;
@@ -34,10 +35,13 @@ function ageMs(iso: string | null, now: number): number | null {
   return now - ts;
 }
 
+type IssueSeverity = 'error' | 'info';
+
 interface Issue {
   id: string;
   message: string;
   cta?: { label: string; onClick: () => void };
+  severity: IssueSeverity;
 }
 
 function buildIssues(props: Props, now: number): Issue[] {
@@ -50,12 +54,14 @@ function buildIssues(props: Props, now: number): Issue[] {
   if (pollAge === null) {
     issues.push({
       id: 'poll-never',
+      severity: 'error',
       message: 'No successful poll on record yet. Verify cron-job.org is configured.',
     });
   } else if (pollAge > POLL_STALE_MS) {
     const mins = Math.floor(pollAge / 60_000);
     issues.push({
       id: 'poll-stale',
+      severity: 'error',
       message: `Last successful poll was ${mins} minutes ago. cron-job.org may be misconfigured or the function is failing.`,
     });
   }
@@ -66,6 +72,7 @@ function buildIssues(props: Props, now: number): Issue[] {
     if (expiresAt < now) {
       issues.push({
         id: 'oauth-expired',
+        severity: 'error',
         message: 'Gmail authorization has expired. The poller cannot fetch new history events until you re-authorize.',
         cta: onReauthorize ? { label: 'Re-authorize', onClick: onReauthorize } : undefined,
       });
@@ -73,6 +80,7 @@ function buildIssues(props: Props, now: number): Issue[] {
   } else {
     issues.push({
       id: 'oauth-missing',
+      severity: 'error',
       message: 'Gmail OAuth is not configured. Sign in to grant Gmail History API access.',
       cta: onReauthorize ? { label: 'Authorize Gmail', onClick: onReauthorize } : undefined,
     });
@@ -84,18 +92,50 @@ function buildIssues(props: Props, now: number): Issue[] {
     if (pushAge === null) {
       issues.push({
         id: 'push-never',
+        severity: 'error',
         message: 'You are subscribed to push notifications, but no push has been delivered yet.',
         cta: onResubscribe ? { label: 'Re-subscribe', onClick: onResubscribe } : undefined,
       });
     } else if (pushAge > PUSH_STALE_MS) {
       issues.push({
         id: 'push-stale',
+        severity: 'error',
         message: 'No successful push notification in the last 24 hours. Your subscription may have expired on the device.',
         cta: onResubscribe ? { label: 'Re-subscribe', onClick: onResubscribe } : undefined,
       });
     }
   }
+
+  // Pixel-hit staleness — informational. Only flag when there is at
+  // least one open on record but it's been quiet for a week. Skipping
+  // the "never" case avoids alarming users on first sign-in before any
+  // tracked email has actually been opened.
+  const pixelHitAge = ageMs(health.last_pixel_hit_at, now);
+  if (pixelHitAge !== null && pixelHitAge > PIXEL_HIT_STALE_MS) {
+    const days = Math.floor(pixelHitAge / (24 * 60 * 60_000));
+    issues.push({
+      id: 'pixel-hit-stale',
+      severity: 'info',
+      message: `No tracked email has been opened in ${days} days. If you're sending tracked email, the pixel endpoint may be unreachable.`,
+    });
+  }
+
   return issues;
+}
+
+// Return the colour palette for a given issue severity. Errors render in
+// red so they're scanned first; info renders in blue so the user can tell
+// it's not actionable on the same axis as auth/push breakage.
+function paletteFor(severity: IssueSeverity): {
+  background: string;
+  border: string;
+  color: string;
+  ctaBg: string;
+} {
+  if (severity === 'info') {
+    return { background: '#eff6ff', border: '#bfdbfe', color: '#1e40af', ctaBg: '#1e40af' };
+  }
+  return { background: '#fef2f2', border: '#fecaca', color: '#991b1b', ctaBg: '#991b1b' };
 }
 
 export function HealthBanner(props: Props) {
@@ -113,44 +153,48 @@ export function HealthBanner(props: Props) {
       }}
       data-testid="health-banner"
     >
-      {issues.map((issue) => (
-        <div
-          key={issue.id}
-          data-testid={`health-issue-${issue.id}`}
-          style={{
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            color: '#991b1b',
-            borderRadius: 6,
-            padding: '10px 12px',
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <span style={{ flex: 1 }}>{issue.message}</span>
-          {issue.cta && (
-            <button
-              onClick={issue.cta.onClick}
-              style={{
-                minHeight: 44,
-                minWidth: 44,
-                padding: '6px 12px',
-                background: '#991b1b',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              {issue.cta.label}
-            </button>
-          )}
-        </div>
-      ))}
+      {issues.map((issue) => {
+        const palette = paletteFor(issue.severity);
+        return (
+          <div
+            key={issue.id}
+            data-testid={`health-issue-${issue.id}`}
+            data-severity={issue.severity}
+            style={{
+              background: palette.background,
+              border: `1px solid ${palette.border}`,
+              color: palette.color,
+              borderRadius: 6,
+              padding: '10px 12px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <span style={{ flex: 1 }}>{issue.message}</span>
+            {issue.cta && (
+              <button
+                onClick={issue.cta.onClick}
+                style={{
+                  minHeight: 44,
+                  minWidth: 44,
+                  padding: '6px 12px',
+                  background: palette.ctaBg,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                {issue.cta.label}
+              </button>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

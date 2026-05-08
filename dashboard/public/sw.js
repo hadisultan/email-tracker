@@ -37,15 +37,40 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+// Reject anything that isn't a same-origin absolute path. Strings that
+// start with `//` are protocol-relative — the browser treats them as
+// cross-origin (e.g. `//attacker.com` → `https://attacker.com`), so a
+// poisoned push payload could phish via clients.openWindow. Only allow
+// `/...` paths, never full URLs from the payload.
+function isSafeRelativePath(value) {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.startsWith('/')
+    && !value.startsWith('//')
+  );
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.dashboardUrl) || '/';
+  const requested = event.notification.data && event.notification.data.dashboardUrl;
+  const target = isSafeRelativePath(requested) ? requested : '/';
   event.waitUntil(
     self.clients
       .matchAll({ type: 'window', includeUncontrolled: true })
       .then((clientList) => {
         for (const client of clientList) {
-          if ('focus' in client && client.url.endsWith(target)) {
+          if (!('focus' in client)) continue;
+          // Compare pathnames rather than endsWith() so `/messages/m-1`
+          // doesn't accidentally match `/admin/messages/m-1` via the
+          // suffix collision.
+          let clientPath;
+          try {
+            clientPath = new URL(client.url).pathname;
+          } catch {
+            continue;
+          }
+          if (clientPath === target) {
             return client.focus();
           }
         }

@@ -15,8 +15,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from '../lib/web-push-client.js';
-
-type Filter = 'real' | 'all' | 'hidden';
+import type { Filter } from '../types.js';
 
 const FILTER_TAGS: Record<Filter, string[] | null> = {
   real: ['none', 'self_view_mobile'],

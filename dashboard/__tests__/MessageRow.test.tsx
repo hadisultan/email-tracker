@@ -41,6 +41,23 @@ describe('MessageRow', () => {
     expect(screen.getByText('(no subject)')).toBeInTheDocument();
   });
 
+  it('falls back to created_at when sent_at is null (e.g. orphan message that never made it through Gmail send)', () => {
+    render(
+      <MessageRow
+        message={{
+          ...baseMessage,
+          sent_at: null,
+          created_at: '2025-01-15T10:00:00Z',
+        }}
+        filter="real"
+        loadHits={async () => []}
+      />,
+    );
+    // We render a localised string of created_at when sent_at is null.
+    // Use a year regex to avoid timezone flakiness.
+    expect(screen.getByText(/Sent .*2025/)).toBeInTheDocument();
+  });
+
   it('shows MultiRecipientNotice when there are multiple recipients', () => {
     render(
       <MessageRow

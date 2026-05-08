@@ -105,13 +105,31 @@ export async function subscribeToPush(): Promise<PushSubscription> {
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToBufferSource(vapidKey),
   });
-  await postPushSubscription({
-    endpoint: sub.endpoint,
-    keys: {
-      p256dh: arrayBufferToBase64(sub.getKey('p256dh')),
-      auth: arrayBufferToBase64(sub.getKey('auth')),
-    },
-  });
+  // PushSubscription.getKey() returns ArrayBuffer | null per spec. A null
+  // here means the browser produced a subscription we can never push to;
+  // roll back so the next subscribe attempt starts clean instead of
+  // leaving an orphan subscription registered with the SW.
+  const p256dh = sub.getKey('p256dh');
+  const auth = sub.getKey('auth');
+  if (!p256dh || !auth) {
+    await sub.unsubscribe().catch(() => undefined);
+    throw new Error('Push subscription is missing p256dh or auth key');
+  }
+  // Atomicity: if the server-side store fails, we must unsubscribe so
+  // the browser and server don't diverge (browser thinks it's subscribed,
+  // server has no record → silent push-delivery failure forever).
+  try {
+    await postPushSubscription({
+      endpoint: sub.endpoint,
+      keys: {
+        p256dh: arrayBufferToBase64(p256dh),
+        auth: arrayBufferToBase64(auth),
+      },
+    });
+  } catch (err) {
+    await sub.unsubscribe().catch(() => undefined);
+    throw err;
+  }
   return sub;
 }
 

@@ -62,7 +62,21 @@ export function App() {
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 403) {
-          await sb.auth.signOut();
+          // signOut can fail if Supabase auth is offline or the session
+          // is already corrupt. Log it but still clear local auth state
+          // so the user sees the error and isn't stuck in a half-signed-in
+          // loop on refresh.
+          try {
+            await sb.auth.signOut();
+          } catch (signOutErr) {
+            console.error(
+              JSON.stringify({
+                source: 'oauth-finalize',
+                stage: 'signOut',
+                err: (signOutErr as Error).message,
+              }),
+            );
+          }
           setAuth({
             session: null,
             loaded: true,
