@@ -193,13 +193,25 @@ describe('schema: tag column accepts arbitrary values (no CHECK constraint)', ()
 });
 
 describe('schema: drain partial index is used by EXPLAIN', () => {
-  it("uses pixel_hits_drain_idx for tag='none' AND notified_at IS NULL", async () => {
-    // Force planner to prefer index access. With a near-empty pixel_hits
-    // table the planner sometimes picks Seq Scan; we only care that the
-    // partial index *is usable* by this query, so disable seq scan in
-    // a tx.
+  it("pixel_hits_drain_idx exists with the right partial predicate, and EXPLAIN picks an index", async () => {
+    // Direct schema check: the partial index's WHERE predicate must match
+    // the drain query's filter exactly. This is the property we actually
+    // care about and it's planner-independent.
+    const idxDef = await sql<{ def: string }[]>`
+      SELECT pg_get_indexdef(indexrelid) AS def
+      FROM pg_index
+      WHERE indexrelid = 'public.pixel_hits_drain_idx'::regclass
+    `;
+    expect(idxDef.length).toBe(1);
+    expect(idxDef[0]!.def).toMatch(/WHERE\s+\(\(tag\s*=\s*'none'::text\)\s+AND\s+\(notified_at IS NULL\)\)/i);
+
+    // Planner check: with seqscan + bitmapscan disabled, any index plan
+    // is acceptable — both pixel_hits_drain_idx (partial) and
+    // pixel_hits_tag_hit_at_idx (composite) are valid for the drain
+    // query. The point is "an index is used", not which one.
     const plan = await sql.begin(async (tx) => {
       await tx`SET LOCAL enable_seqscan = off`;
+      await tx`SET LOCAL enable_bitmapscan = off`;
       return tx<{ ['QUERY PLAN']: string }[]>`
         EXPLAIN
         SELECT id FROM public.pixel_hits
@@ -209,7 +221,7 @@ describe('schema: drain partial index is used by EXPLAIN', () => {
       `;
     });
     const text = plan.map((r) => r['QUERY PLAN']).join('\n');
-    expect(text).toMatch(/pixel_hits_drain_idx/);
+    expect(text).toMatch(/Index Scan|Index Only Scan/);
   });
 });
 

@@ -1099,7 +1099,7 @@ hashing.
 
 ---
 
-- [ ] **Unit 5: Mint, beacon, and push-subscribe endpoints**
+- [x] **Unit 5: Mint, beacon, and push-subscribe endpoints**
 
 **Goal:** Expose the three extension-driven endpoints that record sends,
 self-views, and push subscriptions. All three are gated by the service
