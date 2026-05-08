@@ -1,0 +1,26 @@
+{
+  "name": "email-tracker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Personal Mailtrack/Mailsuite equivalent for a single Gmail account (extension + Netlify Functions + Supabase + dashboard).",
+  "workspaces": [
+    "extension",
+    "functions",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit --project extension/tsconfig.json && tsc --noEmit --project functions/tsconfig.json && tsc --noEmit --project dashboard/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

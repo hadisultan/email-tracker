@@ -1,0 +1,39 @@
+[build]
+  base = "."
+  publish = "dashboard/dist"
+  command = "npm run build --workspace=dashboard"
+
+[functions]
+  directory = "functions"
+  node_bundler = "esbuild"
+  # Test files must never deploy as callable endpoints.
+  excluded_files = [
+    "functions/__tests__/**",
+    "functions/**/*.test.ts",
+    "functions/**/*.test.tsx"
+  ]
+
+[dev]
+  framework = "#custom"
+  command = "npm run dev --workspace=dashboard"
+  targetPort = 5173
+  port = 8888
+  publish = "dashboard/dist"
+
+# Pixel endpoint — /pixel/<token>.gif  →  functions/pixel.ts
+[[redirects]]
+  from = "/pixel/*"
+  to = "/.netlify/functions/pixel/:splat"
+  status = 200
+
+# All other API surface — /api/<name>  →  functions/<name>.ts
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA fallback for the dashboard.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -596,7 +596,7 @@ parallelism opportunity in the plan.
 
 ## Implementation Units
 
-- [ ] **Unit 1: Repository scaffold and toolchain**
+- [x] **Unit 1: Repository scaffold and toolchain**
 
 **Goal:** Stand up the four top-level project directories with their build
 configs so subsequent units have a place to write code.

@@ -1,0 +1,16 @@
+{
+  "name": "@email-tracker/functions",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Netlify Functions: pixel endpoint, mint, beacon, push-subscribe, gmail-poll, oauth-finalize, dashboard API.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --project functions"
+  },
+  "dependencies": {
+    "@netlify/functions": "^2.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

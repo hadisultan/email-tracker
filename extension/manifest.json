@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "Email Tracker",
+  "version": "0.0.1",
+  "description": "Personal email open-tracking integration for Gmail (single-user).",
+  "minimum_chrome_version": "120"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@email-tracker/extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Manifest V3 Chrome extension that injects a tracking pixel into Gmail compose and beacons self-views.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --project extension"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.280",
+    "typescript": "^5.6.3"
+  }
+}
