@@ -95,13 +95,13 @@ export async function withAuth(
   return { ...init, headers };
 }
 
-// === U6b / U6c stubs ===
+// === U6b: real mint() ===
 
 export interface MintBody {
   subject: string;
   recipients: string[];
-  gmail_thread_id?: string;
-  gmail_message_id?: string;
+  gmail_thread_id: string | null;
+  gmail_message_id: string | null;
   sent_at: string;
 }
 
@@ -110,9 +110,31 @@ export interface MintResult {
   pixel_url: string;
 }
 
-export async function mint(_body: MintBody, _idempotencyKey: string): Promise<MintResult> {
-  throw new Error('mint() is implemented in U6b');
+export async function mint(body: MintBody, idempotencyKey: string, signal?: AbortSignal): Promise<MintResult> {
+  const init = await withAuth({
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+  const res = await fetch(`${apiBase()}/api/mint`, { ...init, signal });
+  if (!res.ok) {
+    if (res.status === 401) {
+      // Token rejected — clear so the popup can re-prompt.
+      await clearStoredToken().catch(() => undefined);
+    }
+    throw await parseError(res);
+  }
+  const parsed = (await res.json()) as { token?: unknown; pixel_url?: unknown };
+  if (typeof parsed.token !== 'string' || typeof parsed.pixel_url !== 'string') {
+    throw new ApiError(500, 'malformed_response', 'mint missing token or pixel_url');
+  }
+  return { token: parsed.token, pixel_url: parsed.pixel_url };
 }
+
+// === U6c stubs ===
 
 export async function beacon(_gmailThreadId: string): Promise<void> {
   throw new Error('beacon() is implemented in U6c');

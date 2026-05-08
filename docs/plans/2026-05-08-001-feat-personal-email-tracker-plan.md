@@ -1324,7 +1324,7 @@ of-truth pattern from Chrome's docs.
 
 ---
 
-- [ ] **Unit 6b: Chrome extension compose hook (mint + pixel injection)**
+- [x] **Unit 6b: Chrome extension compose hook (mint + pixel injection)**
 
 **Goal:** Hook Gmail compose dialogs, mint tracking tokens on Send,
 inject the pixel `<img>`, and let the email send normally. After U6b

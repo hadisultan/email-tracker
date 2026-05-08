@@ -143,17 +143,98 @@ describe('withAuth', () => {
   });
 });
 
-describe('U6b / U6c stubs', () => {
-  it('mint() throws (implemented in U6b)', async () => {
-    const { mint } = await import('../src/lib/api.js');
-    await expect(
-      mint(
-        { subject: '', recipients: ['x@y'], sent_at: new Date().toISOString() },
-        '00000000-0000-4000-8000-000000000000',
-      ),
-    ).rejects.toThrow(/U6b/);
+describe('mint (U6b)', () => {
+  const validBody = {
+    subject: 'hi',
+    recipients: ['a@b.com'],
+    gmail_thread_id: null,
+    gmail_message_id: null,
+    sent_at: '2026-05-08T00:00:00.000Z',
+  };
+  const idem = '00000000-0000-4000-8000-000000000000';
+
+  it('POSTs to /api/mint with bearer + idempotency-key and returns token + pixel_url', async () => {
+    const { setStoredToken, mint } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(200, {
+        token: 'tk_abc',
+        pixel_url: 'http://localhost:8888/pixel/tk_abc',
+      }) as never,
+    );
+
+    const result = await mint(validBody, idem);
+
+    expect(result).toEqual({ token: 'tk_abc', pixel_url: 'http://localhost:8888/pixel/tk_abc' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8888/api/mint');
+    const reqInit = init as RequestInit & { headers: Record<string, string> };
+    expect(reqInit.method).toBe('POST');
+    expect(reqInit.headers['Authorization']).toBe('Bearer et_authed');
+    expect(reqInit.headers['idempotency-key']).toBe(idem);
+    expect(JSON.parse(reqInit.body as string)).toEqual(validBody);
   });
 
+  it('throws ApiError(401, no_token) when not paired', async () => {
+    const { mint, ApiError } = await import('../src/lib/api.js');
+    await expect(mint(validBody, idem)).rejects.toBeInstanceOf(ApiError);
+    await expect(mint(validBody, idem)).rejects.toMatchObject({
+      status: 401,
+      code: 'no_token',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears the stored token when the server returns 401', async () => {
+    const { setStoredToken, mint, getStoredToken } = await import('../src/lib/api.js');
+    await setStoredToken('et_stale');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(401, { error: { code: 'unauthorized', message: 'bad token' } }) as never,
+    );
+
+    await expect(mint(validBody, idem)).rejects.toMatchObject({ status: 401 });
+    expect(await getStoredToken()).toBeNull();
+  });
+
+  it('throws ApiError(400, idempotency_required) on backend rejection', async () => {
+    const { setStoredToken, mint } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(400, {
+        error: { code: 'idempotency_required', message: 'Idempotency-Key header required' },
+      }) as never,
+    );
+    await expect(mint(validBody, idem)).rejects.toMatchObject({
+      status: 400,
+      code: 'idempotency_required',
+    });
+  });
+
+  it('throws ApiError(500, malformed_response) when the body is missing pixel_url', async () => {
+    const { setStoredToken, mint } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(makeJsonResponse(200, { token: 'tk_abc' }) as never);
+    await expect(mint(validBody, idem)).rejects.toMatchObject({
+      status: 500,
+      code: 'malformed_response',
+    });
+  });
+
+  it('forwards an AbortSignal to fetch', async () => {
+    const { setStoredToken, mint } = await import('../src/lib/api.js');
+    await setStoredToken('et_authed');
+    fetchSpy.mockResolvedValue(
+      makeJsonResponse(200, { token: 't', pixel_url: 'u' }) as never,
+    );
+    const ac = new AbortController();
+    await mint(validBody, idem, ac.signal);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect((init as RequestInit).signal).toBe(ac.signal);
+  });
+});
+
+describe('U6c stubs', () => {
   it('beacon() throws (implemented in U6c)', async () => {
     const { beacon } = await import('../src/lib/api.js');
     await expect(beacon('thread-1')).rejects.toThrow(/U6c/);
