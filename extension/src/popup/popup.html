@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Email Tracker</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Email Tracker</h1>
+      <span id="status" class="status status-unpaired">Not paired</span>
+    </header>
+
+    <p id="diagnostic" class="diagnostic">
+      Generate a pairing code in the dashboard, then paste it here.
+    </p>
+
+    <form id="pair-form" novalidate>
+      <label for="code" class="visually-hidden">Pairing code</label>
+      <input
+        id="code"
+        name="code"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="XXXX-XXXX-XXXX-XXXX"
+      />
+      <button id="pair-btn" type="submit" disabled>Pair</button>
+    </form>
+
+    <p id="error" class="error" hidden></p>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

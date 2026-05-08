@@ -1,0 +1,127 @@
+:root {
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --bg: #ffffff;
+  --border: #d0d7de;
+  --accent: #1f6feb;
+  --accent-hover: #1a5dc9;
+  --paired: #1a7f37;
+  --unpaired: #9a6700;
+  --error: #cf222e;
+  --radius: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  padding: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.status {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.status-paired {
+  color: var(--paired);
+  border-color: var(--paired);
+}
+
+.status-unpaired {
+  color: var(--unpaired);
+  border-color: var(--unpaired);
+}
+
+.diagnostic {
+  margin: 0 0 12px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+#pair-form {
+  display: flex;
+  gap: 8px;
+}
+
+#code {
+  flex: 1;
+  padding: 6px 8px;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#code:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+button {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--error);
+  background: #fff8f8;
+  border: 1px solid #ffd0d4;
+  border-radius: var(--radius);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

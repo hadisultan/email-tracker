@@ -1203,7 +1203,7 @@ token from Unit 4.
 
 ---
 
-- [ ] **Unit 6a: Chrome extension foundation (manifest, build, popup pairing, service-worker auth)**
+- [x] **Unit 6a: Chrome extension foundation (manifest, build, popup pairing, service-worker auth)**
 
 **Goal:** Stand up the extension shell — manifest, build pipeline, popup
 UI for pairing, service-worker auth state, and the `api.ts` library
