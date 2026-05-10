@@ -135,3 +135,25 @@ instincts:
     last_seen: 2026-05-09
     evidence:
       - "docs/solutions/runtime-errors/netlify-v2-functions-path-suffix-404-2026-05-09.md (Prevention section)"
+
+  - id: review-solution-docs-against-repo-reality
+    trigger: "after authoring a `docs/solutions/` entry that contains code snippets purporting to show actual repo state"
+    behavior: "run a doc review subagent (or grep yourself) to verify each snippet matches the real file. Snippets written from memory drift — signatures, variable names, sync vs async, missing entries in arrays. Catch them before commit."
+    confidence: 0.5
+    domain: workflow
+    observations: 1
+    first_seen: 2026-05-09
+    last_seen: 2026-05-09
+    evidence:
+      - "this session: a general-purpose review agent run over the 6 Step-8 solution docs found 7 substantive issues (extractToken signature wrong, 21-char claim contradicted the genericized example, FILTER_TAGS missing the `all: null` arm, build.mjs shown as async when it's sync, manifest.json host_permissions missing the Gmail entry, spurious `force = true` in netlify.toml snippet, contradictory 'HTTP 200 from the function' phrasing). All 7 corrected in commit 5f3f999."
+
+  - id: watch-netlify-deploy-after-pushing-master
+    trigger: "after `git push` to master with changes that could affect Netlify (anything under functions/, netlify.toml, or any committed file that could contain strings the secret-scanner matches — URLs, emails, project IDs)"
+    behavior: "do not declare the work 'done' until the Netlify deploy is observed green. Netlify's secret scanner is silent at commit time and only fails at build. Repeated pushes after a scan failure compound the problem because each subsequent commit also fails until the offending literal is removed."
+    confidence: 0.5
+    domain: workflow
+    observations: 1
+    first_seen: 2026-05-10
+    last_seen: 2026-05-10
+    evidence:
+      - "73059a0: scrubbed literal SITE_URL from the netlify-secret-scanner doc itself only after the user surfaced 3 consecutive failed deploys (5f3f999, 79b1ca8, 24e28e4) in a screenshot. The agent had moved on after each push without checking deploy status; without the user's intervention, the failed deploys would have stayed broken indefinitely."
