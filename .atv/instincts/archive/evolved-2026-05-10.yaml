@@ -1,0 +1,20 @@
+version: 1
+archived_at: 2026-05-10
+project: email-tracker
+
+# Instincts evolved into full skills on this date. Preserved here for
+# history; not loaded by /learn or /instincts.
+
+evolved:
+  - id: conventional-commit-prefixes
+    trigger: "when authoring a git commit message"
+    behavior: "use a conventional-commit prefix with optional scope: feat(scope), fix(scope), refactor(scope), docs(scope), test(scope), chore(scope). The subject line is lowercase imperative, no trailing period."
+    confidence: 0.95
+    domain: workflow
+    observations: 25
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evolved_to: .github/skills/learned-commit-conventions/SKILL.md
+    evolved_at: 2026-05-10
+    evidence:
+      - "every commit in `git log --oneline -25` uses this format (e.g. 5f3f999, bcffb64, 358e36a, 80ef5e7, f3457a9, 6e99339, 27721b1, a65f2bd, 390476e, 6084f63, 3d6b04e, 89e173d, eeeedd7, d83270e, 740f359, ec8189c, 3ee62e4, 8c97ead, 065d303, a8d93ae, 1a3e931, bb35e70, 5e8bd4c)"
