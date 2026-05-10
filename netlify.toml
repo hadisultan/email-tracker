@@ -3,6 +3,16 @@
   publish = "dashboard/dist"
   command = "npm run build --workspace=dashboard"
 
+[build.environment]
+  # DASHBOARD_ORIGIN is the public production URL of this site
+  # (https://hadi-email-tracker.netlify.app). It legitimately appears
+  # in the extension's manifest.json `host_permissions` and in
+  # extension/build.mjs as the API base for production builds.
+  # Netlify's secret scanner flags any env-var value found in the
+  # deployed source tree; opt this single key out so the scanner
+  # doesn't fail builds on a public URL.
+  SECRETS_SCAN_OMIT_KEYS = "DASHBOARD_ORIGIN"
+
 [functions]
   directory = "functions"
   node_bundler = "esbuild"
@@ -22,14 +32,15 @@
   port = 8888
   publish = "dashboard/dist"
 
-# Pixel endpoint — /pixel/<token>  →  /.netlify/functions/pixel/<token>.
-# pixel.ts is intentionally left without `export const config` so it
-# stays on the default legacy auto-mount, which accepts the splat'd
-# path suffix. We tried V2 `config.path` and the route silently failed
-# to register at deploy time.
+# Pixel endpoint — /pixel/<token>  →  /.netlify/functions/pixel?token=<token>.
+# Netlify V2 functions on the legacy auto-mount only match the EXACT
+# path `/.netlify/functions/pixel` (path suffixes silently fall through
+# to the SPA), so the redirect must pass the token via the query string
+# rather than the path. functions/pixel.ts reads `?token=` (with a
+# path-segment fallback for `netlify dev` and tests).
 [[redirects]]
   from = "/pixel/*"
-  to = "/.netlify/functions/pixel/:splat"
+  to = "/.netlify/functions/pixel?token=:splat"
   status = 200
 
 # All other API surface — /api/<name>  →  functions/<name>.ts

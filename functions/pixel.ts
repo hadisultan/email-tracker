@@ -46,10 +46,15 @@ function logError(fields: Record<string, unknown>): void {
 }
 
 function extractToken(url: URL): string | null {
-  // The Netlify redirect rewrites /pixel/<token> -> the function URL
-  // and preserves the path under `:splat`. We look at the trailing
-  // path segment of the requested URL so the same code works in
-  // local Netlify dev and in production.
+  // Netlify V2 functions on the legacy auto-mount only respond at the
+  // exact path `/.netlify/functions/pixel`; path suffixes are not
+  // forwarded to the function. So the public `/pixel/<token>` URL is
+  // rewritten by `netlify.toml` into `/.netlify/functions/pixel?token=<token>`
+  // and we read the token from the query string. The path-segment
+  // fallback below is preserved for `netlify dev` (which mounts under
+  // `/.netlify/functions/pixel/<splat>` directly) and for unit tests.
+  const qsToken = url.searchParams.get('token');
+  if (qsToken) return qsToken;
   const segments = url.pathname.split('/').filter(Boolean);
   if (segments.length === 0) return null;
   const last = segments[segments.length - 1]!;
