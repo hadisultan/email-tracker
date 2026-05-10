@@ -1,0 +1,160 @@
+version: 1
+project: email-tracker
+last_updated: 2026-05-09
+
+# Project instincts — small, atomic learned behaviors for the email-tracker
+# repo. Each instinct cites specific evidence (commit SHAs or doc paths).
+# Confidence rules:
+#   0.5 = first observation, 0.6 = second, 0.7 = third, ... cap 0.95.
+
+instincts:
+  - id: conventional-commit-prefixes
+    trigger: "when authoring a git commit message"
+    behavior: "use a conventional-commit prefix with optional scope: feat(scope), fix(scope), refactor(scope), docs(scope), test(scope), chore(scope). The subject line is lowercase imperative, no trailing period."
+    confidence: 0.95
+    domain: workflow
+    observations: 25
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "every commit in `git log --oneline -25` uses this format (e.g. 5f3f999, bcffb64, 358e36a, 80ef5e7, f3457a9, 6e99339, 27721b1, a65f2bd, 390476e, 6084f63, 3d6b04e, 89e173d, eeeedd7, d83270e, 740f359, ec8189c, 3ee62e4, 8c97ead, 065d303, a8d93ae, 1a3e931, bb35e70, 5e8bd4c)"
+
+  - id: bug-fix-ships-with-regression-test-in-same-commit
+    trigger: "when fixing a bug in `functions/`, `extension/`, or `dashboard/`"
+    behavior: "add the regression test to the same commit as the fix. A bug-fix commit with no test changes is suspect."
+    confidence: 0.8
+    domain: testing
+    observations: 4
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "f3457a9: 8 new tests landed with classifier + notify fix (recipient-label.test.ts new + tag-classifier.test.ts +2 tests)"
+      - "6e99339: thread-detect.ts fix bundled with 12/12 thread-detect.test.ts updates"
+      - "80ef5e7: gmail-selectors.ts revert came with the role=listbox exclusion test"
+      - "358e36a: dashboard count fix bundled with 33/33 dashboard tests passing"
+
+  - id: no-prod-env-values-in-source
+    trigger: "when authoring tests, fixtures, default configs, README examples, or any committed source"
+    behavior: "do not write the literal value of any env var on the deploy target. Use generic placeholders (`a@x.com`, `owner@example.com`, `https://example.com`). Netlify's secret scanner is value-based and will fail the build with `Exposed secrets detected: <KEY>`."
+    confidence: 0.8
+    domain: code-style
+    observations: 4
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "5b71c1e: replaced literal owner email with `owner@example.com` in recipient-label.test.ts after secret-scan failure"
+      - "27721b1: parameterized API_BASE out of source via __API_BASE_HOST__ placeholder"
+      - "a65f2bd: also exempted DASHBOARD_ORIGIN from secret scanning"
+      - "f8dfb6b: scrubbed literal supabase keys from tests, fetched dynamically"
+      - "docs/solutions/best-practices/netlify-secret-scanner-deploy-anywhere-2026-05-09.md"
+
+  - id: placeholder-then-build-substitute-for-deploy-anywhere
+    trigger: "when a built artifact (manifest.json, generated config, JS bundle) needs a deploy-target URL or hostname"
+    behavior: "use a `__PLACEHOLDER__` token in committed source and substitute at build time from an env var. Working reference: `extension/manifest.json` uses `__API_BASE_HOST__` and `extension/build.mjs` text-replaces it from `EMAIL_TRACKER_API_BASE`."
+    confidence: 0.6
+    domain: architecture
+    observations: 2
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "27721b1: introduced the __API_BASE_HOST__ placeholder pattern"
+      - "docs/solutions/best-practices/netlify-secret-scanner-deploy-anywhere-2026-05-09.md"
+
+  - id: classifier-is-the-policy-singleton
+    trigger: "when adding logic that needs to decide 'does this row count as X?' where a classifier already produces a tag/verdict for the row"
+    behavior: "add the rule to the classifier, not to downstream consumers (dashboard query, push pipeline, reports). Downstream code reads only `tag`, never raw signals like `proxy_label`. The classifier is the single source of truth for the policy."
+    confidence: 0.7
+    domain: architecture
+    observations: 3
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "f3457a9: Google-proxy classification rule added to tag-classifier.ts, not to dashboard"
+      - "358e36a: dashboard count fix reads `tag`, not raw `proxy_label`"
+      - "docs/solutions/best-practices/classifier-verdict-vs-raw-signals-2026-05-09.md"
+
+  - id: verify-bug-fix-via-supabase-sql-before-declaring-done
+    trigger: "when fixing a production bug whose evidence lives in the database (pixel_hits, messages, self_view_beacons)"
+    behavior: "run a Supabase SQL query against the affected rows after deploying the fix to confirm the new behavior, before declaring the bug resolved. Trust the data, not the unit tests."
+    confidence: 0.7
+    domain: workflow
+    observations: 3
+    first_seen: 2026-05-09
+    last_seen: 2026-05-09
+    evidence:
+      - "Step 8 smoke test 13: confirmed proxy_label='google' classification by SQL"
+      - "Step 8 smoke test 15: confirmed all 3 hits tagged likely_prefetch with notify_after IS NULL"
+      - "Step 8: confirmed array_length(recipients, 1) = 1 for the '21 recipients' bug"
+
+  - id: query-param-redirect-for-netlify-v2-dynamic-paths
+    trigger: "when adding a Netlify V2 function that needs to receive dynamic input from the URL"
+    behavior: "use a query-param redirect in netlify.toml: `to = '/.netlify/functions/<name>?key=:splat'`. Do NOT use path-segment splats (`/.netlify/functions/<name>/:splat`) and do NOT rely on `export const config = { path }` wildcards on legacy auto-mount — both silently fall through to the SPA fallback."
+    confidence: 0.6
+    domain: tooling
+    observations: 2
+    first_seen: 2026-05-08
+    last_seen: 2026-05-08
+    evidence:
+      - "390476e: switched to legacy auto-mount + query-param redirect after path-based attempts failed"
+      - "docs/solutions/runtime-errors/netlify-v2-functions-path-suffix-404-2026-05-09.md"
+
+  - id: leave-postgres-js-type-catalog-enabled
+    trigger: "when configuring a postgres-js client (`postgres()` factory call)"
+    behavior: "do NOT set `fetch_types: false` unless you have measured cold-start data showing the catalog read is a meaningful cost. Without it, `text[]` and other array columns silently come back as raw wire-format strings (`'{a,b,c}'`)."
+    confidence: 0.6
+    domain: tooling
+    observations: 2
+    first_seen: 2026-05-09
+    last_seen: 2026-05-09
+    evidence:
+      - "f3457a9: removed fetch_types: false from functions/lib/db.ts after the '21 recipients' bug"
+      - "docs/solutions/database-issues/postgres-js-fetch-types-text-array-parsing-2026-05-09.md"
+
+  - id: run-workspace-tests-before-committing
+    trigger: "when modifying files under a workspace (`extension/`, `functions/`, or `dashboard/`)"
+    behavior: "run `npm test --workspace=<name>` for that workspace before committing. The repo is a monorepo and workspace-scoped test runs are fast (~few seconds each)."
+    confidence: 0.75
+    domain: testing
+    observations: 4
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "f3457a9 commit body: '96/96 extension + 18 functions tests passed'"
+      - "358e36a commit body: '33/33 dashboard tests passed'"
+      - "80ef5e7 commit body: '16/16 selector tests passed'"
+      - "6e99339 commit body: '12/12 thread-detect tests passed'"
+
+  - id: capture-non-trivial-bugs-in-docs-solutions
+    trigger: "when finishing a non-trivial bug fix, or at the end of a smoke-test session that surfaced production-only failures"
+    behavior: "run `/ce-compound` (or write directly into `docs/solutions/<category>/<slug>-YYYY-MM-DD.md`) capturing problem, symptoms, what didn't work, solution, why-it-works, and prevention. Use the schema in `.github/skills/ce-compound/references/schema.yaml`."
+    confidence: 0.7
+    domain: workflow
+    observations: 3
+    first_seen: 2026-05-08
+    last_seen: 2026-05-09
+    evidence:
+      - "d83270e: documented the React cached-state-stale pattern after fixing it"
+      - "bcffb64: 6 docs documenting Step 8 production deploy gotchas"
+      - "5f3f999: post-review fixes to those docs"
+
+  - id: hedge-observed-external-system-behavior-as-not-published
+    trigger: "when documenting timing windows, retry intervals, or other behavior of a third-party system (Gmail proxy, Apple MPP, Netlify scanner, etc.)"
+    behavior: "phrase claims as 'observed in testing' not as fact. Note explicitly when the third party doesn't publish the behavior. Avoid pinning ranges (`+25-50s`) you only saw a few times."
+    confidence: 0.5
+    domain: code-style
+    observations: 1
+    first_seen: 2026-05-09
+    last_seen: 2026-05-09
+    evidence:
+      - "5f3f999: post-review pass weakened '+15s and +25-50s' to 'within ~60s, observed in testing' in gmail-image-proxy doc"
+
+  - id: smoke-test-deployed-functions-from-public-url-not-internal
+    trigger: "when verifying a Netlify (or any serverless) function works in production"
+    behavior: "curl the public URL (`https://site.netlify.app/your-route/probe`) from outside the Netlify build, not just `/.netlify/functions/<name>`. The two paths can return different things — see Netlify V2 path-suffix issue."
+    confidence: 0.5
+    domain: tooling
+    observations: 1
+    first_seen: 2026-05-09
+    last_seen: 2026-05-09
+    evidence:
+      - "docs/solutions/runtime-errors/netlify-v2-functions-path-suffix-404-2026-05-09.md (Prevention section)"
