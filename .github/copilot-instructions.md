@@ -19,7 +19,7 @@ This project uses the ATV (Agentic Tool & Workflow) Starter Kit.
 
 - `docs/plans/` — Implementation plans (living documents with checkboxes)
 - `docs/brainstorms/` — Brainstorm documents (what to build decisions)
-- `docs/solutions/` — Documented solutions (institutional knowledge)
+- `docs/solutions/` — Documented solutions to past problems, organized by category (`build-errors/`, `runtime-errors/`, `database-issues/`, `logic-errors/`, `best-practices/`, etc.) with YAML frontmatter (`module`, `component`, `tags`, `problem_type`). Searchable institutional knowledge — relevant when implementing or debugging in documented areas.
 
 ## gstack Skills (if installed)
 
