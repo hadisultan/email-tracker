@@ -52,10 +52,16 @@ Failure modes the popup distinguishes:
 
 For a production build pointing at your deployed Netlify URL:
 
-1. Edit `src/lib/config.ts` and replace the default API base URL.
-2. Run `npm run build --workspace=extension`.
-3. Run `npm run package --workspace=extension` to produce
+1. `EMAIL_TRACKER_API_BASE=https://your-deploy.netlify.app npm run build --workspace=extension`
+   (the build script substitutes the URL into the dist'd manifest.json
+   `host_permissions` and injects it as `globalThis.__API_BASE__` in
+   the bundled JS — no committed source file references a specific
+   deployment URL).
+2. `npm run package --workspace=extension` to produce
    `extension/extension-v<version>.zip`.
+
+A no-arg `npm run build` defaults `EMAIL_TRACKER_API_BASE` to
+`http://localhost:8888` for local Netlify dev.
 
 ### Stable extension ID
 

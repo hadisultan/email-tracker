@@ -3,16 +3,6 @@
   publish = "dashboard/dist"
   command = "npm run build --workspace=dashboard"
 
-[build.environment]
-  # DASHBOARD_ORIGIN is the public production URL of this site
-  # (https://hadi-email-tracker.netlify.app). It legitimately appears
-  # in the extension's manifest.json `host_permissions` and in
-  # extension/build.mjs as the API base for production builds.
-  # Netlify's secret scanner flags any env-var value found in the
-  # deployed source tree; opt this single key out so the scanner
-  # doesn't fail builds on a public URL.
-  SECRETS_SCAN_OMIT_KEYS = "DASHBOARD_ORIGIN"
-
 [functions]
   directory = "functions"
   node_bundler = "esbuild"
