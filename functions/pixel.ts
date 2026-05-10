@@ -158,7 +158,11 @@ export default async function pixelHandler(
 }
 
 // Pin the function to its public path. The token is the trailing
-// segment of the URL (parsed from req.url in `extractToken`).
+// segment of the URL (parsed from req.url in `extractToken`). Two
+// patterns are registered: the parameterized `/pixel/:token` (canonical
+// happy path) and bare `/pixel` (defensive — keeps the function alive
+// for token-less requests so we still respond with the transparent GIF
+// instead of leaking a 404).
 export const config = {
-  path: '/pixel/*',
+  path: ['/pixel/:token', '/pixel'],
 };
