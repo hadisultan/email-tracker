@@ -25,21 +25,6 @@ instincts:
       - "80ef5e7: gmail-selectors.ts revert came with the role=listbox exclusion test"
       - "358e36a: dashboard count fix bundled with 33/33 dashboard tests passing"
 
-  - id: no-prod-env-values-in-source
-    trigger: "when authoring tests, fixtures, default configs, README examples, or any committed source"
-    behavior: "do not write the literal value of any env var on the deploy target. Use generic placeholders (`a@x.com`, `owner@example.com`, `https://example.com`). Netlify's secret scanner is value-based and will fail the build with `Exposed secrets detected: <KEY>`."
-    confidence: 0.8
-    domain: code-style
-    observations: 4
-    first_seen: 2026-05-08
-    last_seen: 2026-05-09
-    evidence:
-      - "5b71c1e: replaced literal owner email with `owner@example.com` in recipient-label.test.ts after secret-scan failure"
-      - "27721b1: parameterized API_BASE out of source via __API_BASE_HOST__ placeholder"
-      - "a65f2bd: also exempted DASHBOARD_ORIGIN from secret scanning"
-      - "f8dfb6b: scrubbed literal supabase keys from tests, fetched dynamically"
-      - "docs/solutions/best-practices/netlify-secret-scanner-deploy-anywhere-2026-05-09.md"
-
   - id: placeholder-then-build-substitute-for-deploy-anywhere
     trigger: "when a built artifact (manifest.json, generated config, JS bundle) needs a deploy-target URL or hostname"
     behavior: "use a `__PLACEHOLDER__` token in committed source and substitute at build time from an env var. Working reference: `extension/manifest.json` uses `__API_BASE_HOST__` and `extension/build.mjs` text-replaces it from `EMAIL_TRACKER_API_BASE`."
