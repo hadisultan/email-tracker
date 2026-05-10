@@ -25,6 +25,13 @@
 // old), the handler re-baselines from `users.getProfile` and skips
 // classification this tick.
 //
+// Backfill phase: before history-list classification, the handler
+// resolves `messages.gmail_thread_id` for fresh sends (NULL at mint
+// time because the extension can't read the thread_id from the
+// compose URL — Gmail assigns it server-side). See
+// `lib/backfill-thread-ids.ts`. Failures are logged but do not abort
+// the poll cycle.
+//
 // Drain step: after the classification transaction commits and the
 // advisory lock is released, the handler iterates `pixel_hits` rows
 // whose `notify_after` has elapsed and `tag` is still `'none'`, and
@@ -46,6 +53,7 @@ import {
   type HistoryRecord,
 } from './lib/gmail-api.js';
 import { extractUnreadRemovedThreadIds } from './lib/classify-mobile-self-views.js';
+import { backfillThreadIds } from './lib/backfill-thread-ids.js';
 import { sendPushesForHit } from './lib/notify.js';
 
 // Memorable, deterministic 32-bit constant. Postgres advisory locks are
@@ -81,6 +89,8 @@ type TxOutcome =
       threadsClassified: number;
       hitsUpdated: number;
       newHistoryId: string;
+      backfillCandidates: number;
+      backfilled: number;
     };
 
 async function handler(req: Request, _ctx: Context): Promise<Response> {
@@ -191,6 +201,31 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
         };
       }
 
+      // Backfill `messages.gmail_thread_id` for fresh sends BEFORE
+      // running history-list classification. The classifier JOINs
+      // pixel_hits against `messages.gmail_thread_id`, so backfilling
+      // first means a single poll cycle can both (a) discover the
+      // thread_id for a recent send and (b) immediately tag any
+      // mobile-self-view hits on that thread. Backfill failure is
+      // logged but never aborts the poll — history-list still runs
+      // for already-backfilled messages.
+      let backfillResult = { candidates: 0, backfilled: 0 };
+      try {
+        backfillResult = await backfillThreadIds({
+          sql: tx,
+          userId: cred.user_id,
+          accessToken: accessToken!,
+        });
+      } catch (err) {
+        console.warn(
+          JSON.stringify({
+            source: 'gmail-poll',
+            stage: 'backfill',
+            err: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+
       const expected = cred.last_history_id;
 
       // Pull history pages with 404 recovery.
@@ -295,6 +330,8 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
         threadsClassified: threadIds.length,
         hitsUpdated: updatedCount,
         newHistoryId,
+        backfillCandidates: backfillResult.candidates,
+        backfilled: backfillResult.backfilled,
       };
     });
   } catch (err) {
@@ -385,6 +422,8 @@ async function handler(req: Request, _ctx: Context): Promise<Response> {
     hits_updated: outcome.hitsUpdated,
     drained_pushes: drainedPushes,
     new_history_id: outcome.newHistoryId,
+    backfill_candidates: outcome.backfillCandidates,
+    backfilled: outcome.backfilled,
   });
 }
 

@@ -94,6 +94,23 @@ interface GmailFetchScript {
   oauthRefresh?:
     | { ok: true; access_token: string; expires_in: number }
     | { ok: false; status: number; body?: unknown };
+  // Backfill phase: messages.list response (a single response — the
+  // backfill never paginates). When omitted, returns `{messages: []}`
+  // so existing tests (which seed messages with non-null thread IDs
+  // and therefore never trigger backfill) keep passing.
+  sentMessagesList?: Array<{ id: string; threadId: string }>;
+  sentMessagesListError?: { status: number; body?: unknown };
+  // Backfill phase: messages.get?format=metadata responses keyed by
+  // messageId. When omitted for a queried id, the mock returns 404 so
+  // the backfill skips that message.
+  messageMetadata?: Record<
+    string,
+    {
+      threadId: string;
+      internalDate: string;
+      subject?: string;
+    }
+  >;
 }
 
 function installFetchMock(script: GmailFetchScript): ReturnType<typeof vi.spyOn> {
@@ -150,6 +167,52 @@ function installFetchMock(script: GmailFetchScript): ReturnType<typeof vi.spyOn>
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.startsWith('https://gmail.googleapis.com/gmail/v1/users/me/messages')) {
+      const parsed = new URL(url);
+      const pathParts = parsed.pathname.split('/');
+      // Path is '/gmail/v1/users/me/messages' (list) or
+      // '/gmail/v1/users/me/messages/{id}' (get).
+      const messagesIdx = pathParts.indexOf('messages');
+      const tail = messagesIdx >= 0 ? pathParts.slice(messagesIdx + 1) : [];
+      if (tail.length === 0 || tail.join('') === '') {
+        // messages.list
+        if (script.sentMessagesListError) {
+          return new Response(
+            JSON.stringify(script.sentMessagesListError.body ?? {}),
+            {
+              status: script.sentMessagesListError.status,
+              headers: { 'content-type': 'application/json' },
+            },
+          );
+        }
+        return new Response(
+          JSON.stringify({ messages: script.sentMessagesList ?? [] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      // messages.get — single id segment.
+      const messageId = decodeURIComponent(tail[0]!);
+      const meta = script.messageMetadata?.[messageId];
+      if (!meta) {
+        return new Response(JSON.stringify({ error: 'not_found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const headers: Array<{ name: string; value: string }> = [];
+      if (meta.subject !== undefined) {
+        headers.push({ name: 'Subject', value: meta.subject });
+      }
+      return new Response(
+        JSON.stringify({
+          id: messageId,
+          threadId: meta.threadId,
+          internalDate: meta.internalDate,
+          payload: { headers },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
     throw new Error(`unscripted fetch: ${url}`);
   });
   return spy as never;
@@ -195,6 +258,46 @@ async function seedMessage(threadId: string, sentAtIso: string): Promise<string>
     RETURNING id
   `;
   return rows[0]!.id;
+}
+
+// Seed a message in the same shape mint.ts produces for a fresh
+// compose: gmail_thread_id and gmail_message_id NULL because the
+// extension can't read them at compose time. Used by the backfill
+// tests to drive the resolution-via-Gmail path.
+async function seedNullThreadMessage(args: {
+  subject: string;
+  sentAtIso: string;
+  recipients?: string[];
+}): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO public.messages
+      (user_id, token, client_send_id, subject, recipients, gmail_thread_id, gmail_message_id, sent_at)
+    VALUES (
+      ${SEED_USER_ID},
+      ${'tok-' + Math.random().toString(36).slice(2)},
+      gen_random_uuid(),
+      ${args.subject},
+      ${args.recipients ?? ['recipient@example.com']},
+      NULL,
+      NULL,
+      ${args.sentAtIso}
+    )
+    RETURNING id
+  `;
+  return rows[0]!.id;
+}
+
+async function readMessageThreadIds(messageId: string): Promise<{
+  gmail_thread_id: string | null;
+  gmail_message_id: string | null;
+}> {
+  const rows = await sql<
+    { gmail_thread_id: string | null; gmail_message_id: string | null }[]
+  >`
+    SELECT gmail_thread_id, gmail_message_id
+    FROM public.messages WHERE id = ${messageId}
+  `;
+  return rows[0]!;
 }
 
 async function seedPixelHit(args: {
@@ -771,5 +874,212 @@ describe('gmail-poll handler — drain step (Unit 8)', () => {
     expect(body.drained_pushes).toBe(1);
     expect(webpushMocks.sendNotification).toHaveBeenCalledTimes(2);
     warnSpy.mockRestore();
+  });
+});
+
+describe('gmail-poll handler — backfill phase (gmail_thread_id)', () => {
+  it('backfills gmail_thread_id and gmail_message_id when subject + internalDate match a Gmail send', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    const sentAt = new Date(Date.now() - 30_000);
+    const messageId = await seedNullThreadMessage({
+      subject: 'tracker test 16',
+      sentAtIso: sentAt.toISOString(),
+    });
+
+    installFetchMock({
+      historyPages: [{ history: [], historyId: '1000' }],
+      sentMessagesList: [{ id: 'gm-real', threadId: 'real-thread-id' }],
+      messageMetadata: {
+        'gm-real': {
+          threadId: 'real-thread-id',
+          internalDate: String(sentAt.getTime() + 1500),
+          subject: 'tracker test 16',
+        },
+      },
+    });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      backfill_candidates: number;
+      backfilled: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.backfill_candidates).toBe(1);
+    expect(body.backfilled).toBe(1);
+
+    const ids = await readMessageThreadIds(messageId);
+    expect(ids.gmail_thread_id).toBe('real-thread-id');
+    expect(ids.gmail_message_id).toBe('gm-real');
+  });
+
+  it('skips backfill entirely when no NULL-thread messages exist (does not call messages.list)', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    await seedMessage('thread-already-set', new Date(Date.now() - 60_000).toISOString());
+
+    const fetchSpy = installFetchMock({
+      historyPages: [{ history: [], historyId: '1000' }],
+    });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      backfill_candidates: number;
+      backfilled: number;
+    };
+    expect(body.backfill_candidates).toBe(0);
+    expect(body.backfilled).toBe(0);
+
+    // Verify no messages.list nor messages.get call was made.
+    const messagesCalls = fetchSpy.mock.calls.filter(([url]) =>
+      typeof url === 'string' &&
+      url.startsWith('https://gmail.googleapis.com/gmail/v1/users/me/messages'),
+    );
+    expect(messagesCalls).toEqual([]);
+  });
+
+  it('leaves message NULL when subject does not match any Gmail send', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    const sentAt = new Date(Date.now() - 30_000);
+    const messageId = await seedNullThreadMessage({
+      subject: 'tracker test 16',
+      sentAtIso: sentAt.toISOString(),
+    });
+
+    installFetchMock({
+      historyPages: [{ history: [], historyId: '1000' }],
+      sentMessagesList: [{ id: 'gm-other', threadId: 'th-other' }],
+      messageMetadata: {
+        'gm-other': {
+          threadId: 'th-other',
+          internalDate: String(sentAt.getTime()),
+          subject: 'unrelated newsletter',
+        },
+      },
+    });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    const body = (await res.json()) as {
+      backfill_candidates: number;
+      backfilled: number;
+    };
+    expect(body.backfill_candidates).toBe(1);
+    expect(body.backfilled).toBe(0);
+
+    const ids = await readMessageThreadIds(messageId);
+    expect(ids.gmail_thread_id).toBeNull();
+    expect(ids.gmail_message_id).toBeNull();
+  });
+
+  it('messages.list 5xx does NOT abort the poll cycle (cursor still advances)', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    await seedNullThreadMessage({
+      subject: 'tracker test 16',
+      sentAtIso: new Date(Date.now() - 30_000).toISOString(),
+    });
+
+    installFetchMock({
+      historyPages: [{ history: [], historyId: '1100' }],
+      sentMessagesListError: { status: 503, body: { error: 'down' } },
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await gmailPoll(postPoll(), ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      backfilled: number;
+      new_history_id: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.backfilled).toBe(0);
+    expect(body.new_history_id).toBe('1100');
+    expect(await readCursor()).toBe('1100');
+    warnSpy.mockRestore();
+  });
+
+  it('backfills then immediately tags self_view_mobile in the same poll cycle', async () => {
+    await seedCreds({
+      refreshToken: 'rt_test',
+      accessToken: 'ya29.fresh',
+      accessExpiresAtIso: new Date(Date.now() + 60 * 60_000).toISOString(),
+      lastHistoryId: '1000',
+    });
+    const sentAt = new Date(Date.now() - 5 * 60_000);
+    const messageId = await seedNullThreadMessage({
+      subject: 'tracker test 17',
+      sentAtIso: sentAt.toISOString(),
+    });
+    // Pixel hit on the message that has NULL thread_id pre-backfill.
+    // After backfill the JOIN in the classification step finds the
+    // message and flips this hit to self_view_mobile.
+    const hitId = await seedPixelHit({
+      messageId,
+      hitAtIso: new Date(Date.now() - 4 * 60_000).toISOString(),
+      tag: 'none',
+      notifyAfterIso: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    installFetchMock({
+      historyPages: [
+        {
+          history: [
+            {
+              id: '1100',
+              labelsRemoved: [
+                {
+                  message: { id: 'gm-real', threadId: 'real-thread-id-17' },
+                  labelIds: ['UNREAD'],
+                },
+              ],
+            },
+          ],
+          historyId: '1100',
+        },
+      ],
+      sentMessagesList: [{ id: 'gm-real', threadId: 'real-thread-id-17' }],
+      messageMetadata: {
+        'gm-real': {
+          threadId: 'real-thread-id-17',
+          internalDate: String(sentAt.getTime()),
+          subject: 'tracker test 17',
+        },
+      },
+    });
+
+    const res = await gmailPoll(postPoll(), ctx);
+    const body = (await res.json()) as {
+      ok: boolean;
+      backfilled: number;
+      hits_updated: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.backfilled).toBe(1);
+    expect(body.hits_updated).toBe(1);
+
+    expect(await pixelHitTag(hitId)).toBe('self_view_mobile');
+    const ids = await readMessageThreadIds(messageId);
+    expect(ids.gmail_thread_id).toBe('real-thread-id-17');
   });
 });

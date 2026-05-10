@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HistoryNotFoundError,
+  getMessageMetadata,
   getProfile,
   historyList,
+  listSentMessages,
 } from '../lib/gmail-api.js';
 
 const ACCESS_TOKEN = 'ya29.test_access';
@@ -145,5 +147,199 @@ describe('historyList', () => {
     await expect(
       historyList({ accessToken: ACCESS_TOKEN, startHistoryId: '500' }),
     ).rejects.toThrow(/missing historyId/);
+  });
+});
+
+describe('listSentMessages', () => {
+  it('GETs /messages with q=in:sent newer_than:1d, maxResults=50, fields=messages(id,threadId) by default', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        messages: [
+          { id: 'gm-1', threadId: 'th-1' },
+          { id: 'gm-2', threadId: 'th-2' },
+        ],
+      }) as never,
+    );
+    const result = await listSentMessages({ accessToken: ACCESS_TOKEN });
+    expect(result).toEqual([
+      { id: 'gm-1', threadId: 'th-1' },
+      { id: 'gm-2', threadId: 'th-2' },
+    ]);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    const u = new URL(url as string);
+    expect(u.origin + u.pathname).toBe(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages',
+    );
+    expect(u.searchParams.get('q')).toBe('in:sent newer_than:1d');
+    expect(u.searchParams.get('maxResults')).toBe('50');
+    expect(u.searchParams.get('fields')).toBe('messages(id,threadId)');
+    expect((init as RequestInit).headers).toEqual({
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+    });
+  });
+
+  it('honors newerThan and maxResults overrides', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, { messages: [] }) as never);
+    await listSentMessages({
+      accessToken: ACCESS_TOKEN,
+      newerThan: '2h',
+      maxResults: 10,
+    });
+    const [url] = fetchSpy.mock.calls[0]!;
+    const u = new URL(url as string);
+    expect(u.searchParams.get('q')).toBe('in:sent newer_than:2h');
+    expect(u.searchParams.get('maxResults')).toBe('10');
+  });
+
+  it('returns [] when messages field is missing or empty', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, {}) as never);
+    expect(await listSentMessages({ accessToken: ACCESS_TOKEN })).toEqual([]);
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, { messages: [] }) as never);
+    expect(await listSentMessages({ accessToken: ACCESS_TOKEN })).toEqual([]);
+  });
+
+  it('skips entries with non-string id or threadId', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        messages: [
+          { id: 'gm-good', threadId: 'th-good' },
+          { id: 42, threadId: 'th-bad' },
+          { id: 'gm-bad', threadId: null },
+          { id: 'gm-good-2', threadId: 'th-good-2' },
+        ],
+      }) as never,
+    );
+    const result = await listSentMessages({ accessToken: ACCESS_TOKEN });
+    expect(result).toEqual([
+      { id: 'gm-good', threadId: 'th-good' },
+      { id: 'gm-good-2', threadId: 'th-good-2' },
+    ]);
+  });
+
+  it('throws on non-2xx', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(401, { error: 'unauth' }) as never);
+    await expect(
+      listSentMessages({ accessToken: ACCESS_TOKEN }),
+    ).rejects.toThrow(/gmail messages.list failed: 401/);
+  });
+});
+
+describe('getMessageMetadata', () => {
+  it('GETs /messages/{id}?format=metadata&metadataHeaders=Subject by default', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        id: 'gm-1',
+        threadId: 'th-1',
+        internalDate: '1715300000000',
+        payload: { headers: [{ name: 'Subject', value: 'tracker test 16' }] },
+      }) as never,
+    );
+    const result = await getMessageMetadata({
+      accessToken: ACCESS_TOKEN,
+      messageId: 'gm-1',
+    });
+    expect(result).toEqual({
+      id: 'gm-1',
+      threadId: 'th-1',
+      internalDate: '1715300000000',
+      headers: { subject: 'tracker test 16' },
+    });
+    const [url] = fetchSpy.mock.calls[0]!;
+    const u = new URL(url as string);
+    expect(u.origin + u.pathname).toBe(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/gm-1',
+    );
+    expect(u.searchParams.get('format')).toBe('metadata');
+    expect(u.searchParams.getAll('metadataHeaders')).toEqual(['Subject']);
+  });
+
+  it('encodes the messageId path segment', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        id: 'gm/with slash',
+        threadId: 'th',
+        internalDate: '0',
+      }) as never,
+    );
+    await getMessageMetadata({
+      accessToken: ACCESS_TOKEN,
+      messageId: 'gm/with slash',
+    });
+    const [url] = fetchSpy.mock.calls[0]!;
+    const u = new URL(url as string);
+    expect(u.pathname).toBe(
+      '/gmail/v1/users/me/messages/gm%2Fwith%20slash',
+    );
+  });
+
+  it('passes through multiple headerNames as repeated query params', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        id: 'gm-1',
+        threadId: 'th-1',
+        internalDate: '0',
+        payload: { headers: [] },
+      }) as never,
+    );
+    await getMessageMetadata({
+      accessToken: ACCESS_TOKEN,
+      messageId: 'gm-1',
+      headerNames: ['Subject', 'To', 'From'],
+    });
+    const [url] = fetchSpy.mock.calls[0]!;
+    const u = new URL(url as string);
+    expect(u.searchParams.getAll('metadataHeaders')).toEqual([
+      'Subject',
+      'To',
+      'From',
+    ]);
+  });
+
+  it('lower-cases header names in the result map', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        id: 'gm-1',
+        threadId: 'th-1',
+        internalDate: '1715300000000',
+        payload: {
+          headers: [
+            { name: 'Subject', value: 'Hello' },
+            { name: 'To', value: 'a@b.com' },
+          ],
+        },
+      }) as never,
+    );
+    const result = await getMessageMetadata({
+      accessToken: ACCESS_TOKEN,
+      messageId: 'gm-1',
+      headerNames: ['Subject', 'To'],
+    });
+    expect(result?.headers).toEqual({ subject: 'Hello', to: 'a@b.com' });
+  });
+
+  it('returns null on 404 (message evicted)', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(404, { error: 'gone' }) as never);
+    const result = await getMessageMetadata({
+      accessToken: ACCESS_TOKEN,
+      messageId: 'gm-1',
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when required fields are missing', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { id: 'gm-1', threadId: 'th-1' }) as never,
+    );
+    expect(
+      await getMessageMetadata({ accessToken: ACCESS_TOKEN, messageId: 'gm-1' }),
+    ).toBeNull();
+  });
+
+  it('throws on non-404 error', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(500, { error: 'boom' }) as never);
+    await expect(
+      getMessageMetadata({ accessToken: ACCESS_TOKEN, messageId: 'gm-1' }),
+    ).rejects.toThrow(/gmail messages.get failed: 500/);
   });
 });
