@@ -42,6 +42,21 @@ export function classifyHit(input: ClassifyHitInput): PixelTag {
   // The proxy_label column carries the "this might be MPP" signal.
   if (input.proxyLabel === 'apple_mpp') return 'none';
 
+  // Gmail's image proxy (proxy_label='google') fires at delivery time:
+  // an immediate "scan" pass usually within +15s and a follow-up pass
+  // within +60s of send. After that, Gmail caches the image so further
+  // proxy hits are rare. Treating any google-proxy hit inside the first
+  // minute as a delivery prefetch matches the observed pattern in
+  // testing and prevents spurious "Opened just now" pushes for
+  // delivery-time cache fills. Real desktop self-views are caught by
+  // the beacon path below.
+  if (input.proxyLabel === 'google' && input.sentAt) {
+    const sinceSendMs = input.hitAt.getTime() - input.sentAt.getTime();
+    if (sinceSendMs >= 0 && sinceSendMs < 60_000) {
+      return 'likely_prefetch';
+    }
+  }
+
   if (input.sentAt) {
     const sinceSendMs = input.hitAt.getTime() - input.sentAt.getTime();
     if (sinceSendMs >= 0 && sinceSendMs < PREFETCH_WINDOW_MS) {

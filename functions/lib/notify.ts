@@ -36,13 +36,38 @@ interface MessageRow {
   id: string;
   user_id: string;
   subject: string | null;
-  recipients: string[] | null;
+  recipients: string[] | string | null;
 }
 
-function recipientLabel(recipients: string[] | null): string {
-  if (!recipients || recipients.length === 0) return '(no recipients)';
-  if (recipients.length === 1) return recipients[0]!;
-  return `${recipients.length} recipients`;
+// Exported for unit testing. The string form arises only when the
+// postgres-js client cannot parse text[] (e.g. type catalog missing).
+export function recipientLabel(recipients: string[] | string | null): string {
+  // Belt-and-suspenders: if the underlying postgres-js client wasn't
+  // able to parse `text[]` (e.g. because its type catalog wasn't
+  // fetched), `recipients` arrives as the raw wire form `'{a,b,c}'`.
+  // We previously hit this in production and shipped a notification
+  // body of "21 recipients" because we read string `.length`. Now we
+  // defensively re-parse on the call site so a future regression in
+  // type handling doesn't silently corrupt notification bodies.
+  let arr: string[];
+  if (recipients == null) {
+    arr = [];
+  } else if (Array.isArray(recipients)) {
+    arr = recipients;
+  } else if (typeof recipients === 'string') {
+    const trimmed = recipients.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      const inner = trimmed.slice(1, -1);
+      arr = inner.length === 0 ? [] : inner.split(',').map((s) => s.replace(/^"|"$/g, ''));
+    } else {
+      arr = trimmed.length === 0 ? [] : [trimmed];
+    }
+  } else {
+    arr = [];
+  }
+  if (arr.length === 0) return '(no recipients)';
+  if (arr.length === 1) return arr[0]!;
+  return `${arr.length} recipients`;
 }
 
 function composePayload(msg: MessageRow): PushPayload {

@@ -95,21 +95,26 @@ export function readRecipients(dialog: HTMLElement): string[] {
     out.push(trimmed);
   };
 
-  for (const chip of dialog.querySelectorAll<HTMLElement>(
-    GMAIL_SELECTORS.recipientChip,
-  )) {
-    const email = chip.getAttribute('email');
-    if (email) push(email);
-  }
-
+  // Scope chip lookup to within the recipient field containers. A
+  // dialog-wide `[email]` query also catches Gmail's autocomplete
+  // suggestion list (a recently-contacted dropdown that injects
+  // ~20 `<div email="...">` items into the dialog DOM and leaves them
+  // mounted) and the From-picker — both produced spurious "21
+  // recipients" minted rows in production.
   for (const sel of [
     GMAIL_SELECTORS.toField,
     GMAIL_SELECTORS.ccField,
     GMAIL_SELECTORS.bccField,
   ]) {
-    const fields = dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(sel);
+    const fields = dialog.querySelectorAll<HTMLElement>(sel);
     for (const f of fields) {
-      const v = (f as { value?: unknown }).value;
+      for (const chip of f.querySelectorAll<HTMLElement>(
+        GMAIL_SELECTORS.recipientChip,
+      )) {
+        const email = chip.getAttribute('email');
+        if (email) push(email);
+      }
+      const v = (f as unknown as { value?: unknown }).value;
       if (typeof v === 'string' && v.length > 0) {
         for (const piece of v.split(',')) push(piece);
       }

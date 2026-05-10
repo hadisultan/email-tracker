@@ -25,7 +25,14 @@ export function pgClient(): Sql {
   if (!url) throw new Error('SUPABASE_DB_URL is not set');
   cached = postgres(url, {
     onnotice: () => {},
-    fetch_types: false,
+    // We previously set `fetch_types: false` here to skip the pg_type
+    // catalog fetch on cold start. That had a hidden cost: without the
+    // catalog, postgres-js cannot map array OIDs to their element type,
+    // and `text[]` columns come back as raw wire-format strings like
+    // `'{a@x.com,b@x.com}'`. `recipients.length` then reads the string
+    // length, not the array length — which produced the "21 recipients"
+    // notification body for a single-recipient message. The catalog
+    // fetch is one tiny query and well worth it.
     max: 4,
     idle_timeout: 30,
   });

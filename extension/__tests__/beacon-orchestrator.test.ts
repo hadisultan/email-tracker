@@ -35,7 +35,7 @@ function setHash(hash: string): void {
 
 describe('maybeBeaconCurrentView', () => {
   it('does nothing when not on a sent-thread URL', async () => {
-    setHash('#inbox/abc');
+    setHash('#label/Foo/abc');
     const { _internals } = await loadOrchestrator();
     const beaconFn = vi.fn(async () => undefined);
     await _internals.maybeBeaconCurrentView({ beaconFn, now: () => 1_000 });
@@ -122,7 +122,7 @@ describe('startObserver / hashchange', () => {
   });
 
   it('does not fire on initial start when not on a sent thread', async () => {
-    setHash('#inbox/X');
+    setHash('#label/Foo/X');
     const { startObserver } = await loadOrchestrator();
     const beaconFn = vi.fn(async () => undefined);
     startObserver({ beaconFn, now: () => 1_000 });
