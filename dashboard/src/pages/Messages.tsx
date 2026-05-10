@@ -23,8 +23,20 @@ const FILTER_TAGS: Record<Filter, string[] | null> = {
   hidden: ['self_view_desktop', 'likely_prefetch'],
 };
 
+function countHitsForFilter(
+  hits: { tag: string }[] | undefined,
+  filterMode: Filter,
+): number {
+  if (!hits) return 0;
+  const tags = FILTER_TAGS[filterMode];
+  if (tags === null) return hits.length;
+  const allowed = new Set(tags);
+  return hits.filter((h) => allowed.has(h.tag)).length;
+}
+
 interface MessageWithCount extends MessageSummary {
   gmail_message_id: string | null;
+  hit_tags: string[];
 }
 
 export function Messages() {
@@ -42,7 +54,7 @@ export function Messages() {
         const { data: msgRows, error: msgErr } = await sb
           .from('messages')
           .select(
-            'id, subject, recipients, sent_at, created_at, gmail_message_id, pixel_hits(count)',
+            'id, subject, recipients, sent_at, created_at, gmail_message_id, pixel_hits(tag)',
           )
           .order('sent_at', { ascending: false, nullsFirst: false })
           .order('created_at', { ascending: false })
@@ -57,9 +69,9 @@ export function Messages() {
             sent_at: string | null;
             created_at: string;
             gmail_message_id: string | null;
-            pixel_hits?: { count: number }[];
+            pixel_hits?: { tag: string }[];
           };
-          const hitCount = r.pixel_hits?.[0]?.count ?? 0;
+          const tags = (r.pixel_hits ?? []).map((h) => h.tag);
           return {
             id: r.id,
             subject: r.subject,
@@ -67,7 +79,8 @@ export function Messages() {
             sent_at: r.sent_at,
             created_at: r.created_at,
             gmail_message_id: r.gmail_message_id,
-            hit_count: hitCount,
+            hit_count: 0,
+            hit_tags: tags,
           };
         });
         setMessages(summaries);
@@ -91,13 +104,25 @@ export function Messages() {
 
   const visibleMessages = useMemo(() => {
     if (!messages) return null;
+    // hit_count is computed against the active filter so the badge
+    // ("3 opens") matches what the timeline shows when the user
+    // expands the row. Without this, "Real opens" filter shows zero
+    // hits in the timeline while the badge still claims 3 opens
+    // (which were all delivery-time prefetches).
+    const counted = messages.map((m) => ({
+      ...m,
+      hit_count: countHitsForFilter(
+        m.hit_tags.map((tag) => ({ tag })),
+        filter,
+      ),
+    }));
     // Default 'real' filter hides "orphan" rows: messages with no
     // gmail_message_id (the mint API call succeeded but the Gmail send
     // never completed or never came back through History) AND older
     // than 30d AND no hits ever. Plan line 1784.
-    if (filter !== 'real') return messages;
+    if (filter !== 'real') return counted;
     const cutoff = Date.now() - 30 * 24 * 60 * 60_000;
-    return messages.filter((m) => {
+    return counted.filter((m) => {
       if (m.hit_count > 0) return true;
       if (m.gmail_message_id !== null) return true;
       const created = new Date(m.created_at).getTime();
