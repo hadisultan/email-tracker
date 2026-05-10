@@ -6,7 +6,9 @@
 [functions]
   directory = "functions"
   node_bundler = "esbuild"
-  # Test files must never deploy as callable endpoints.
+
+# Test files must never deploy as callable endpoints.
+[functions."*"]
   excluded_files = [
     "functions/__tests__/**",
     "functions/**/*.test.ts",
