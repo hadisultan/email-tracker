@@ -125,27 +125,32 @@ export interface SentMessageRef {
 
 export interface ListSentMessagesOptions {
   accessToken: string;
-  // Gmail search syntax fragment for "newer than" — e.g. '1d', '2h'.
-  // Defaults to '1d'. We bound the search so a runaway poller doesn't
-  // page through the entire mailbox.
-  newerThan?: string;
   // Cap on result count. Personal accounts send <50/day so 50 is more
   // than enough for any reasonable backfill window.
   maxResults?: number;
 }
 
-// Searches `in:sent` for recent messages. Used by the thread-id
+// Lists recent sends via `labelIds=SENT`. Used by the thread-id
 // backfill phase: at compose time the extension can't read the
 // thread_id (URL has no thread fragment yet), so the message row is
 // stored with `gmail_thread_id = NULL`. The poller asks Gmail for
 // recent sends and matches them back to our rows by Subject +
-// internalDate proximity. Required scope: `gmail.metadata` or
-// `gmail.readonly`.
+// internalDate proximity.
+//
+// We deliberately use `labelIds=SENT` instead of `q=in:sent` because
+// the OAuth consent screen requests `gmail.metadata`, and Gmail
+// silently downgrades a combined `gmail.metadata`+`gmail.readonly`
+// request to metadata-only. Metadata scope rejects any `q=` parameter
+// with `403 Metadata scope does not support 'q' parameter`. Label-id
+// filtering is the only filter metadata scope permits, and
+// most-recent-first ordering covers our needs (the matcher's ±5min
+// window prunes older results client-side). Required scope:
+// `gmail.metadata` or `gmail.readonly`.
 export async function listSentMessages(
   opts: ListSentMessagesOptions,
 ): Promise<SentMessageRef[]> {
   const params = new URLSearchParams();
-  params.set('q', `in:sent newer_than:${opts.newerThan ?? '1d'}`);
+  params.append('labelIds', 'SENT');
   params.set('maxResults', String(opts.maxResults ?? 50));
   params.set('fields', 'messages(id,threadId)');
 

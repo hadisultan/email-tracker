@@ -38,10 +38,6 @@ const MAX_CANDIDATES = 50;
 // more than sufficient.
 const BACKFILL_LOOKBACK = '24 hours';
 
-// Bias the Gmail messages.list query toward freshness. Match the DB
-// lookback so we never pull Gmail metadata we couldn't possibly use.
-const GMAIL_NEWER_THAN = '1d';
-
 export interface BackfillResult {
   // How many NULL-thread messages we considered.
   candidates: number;
@@ -88,7 +84,6 @@ export async function backfillThreadIds(
   try {
     sentRefs = await listSentMessages({
       accessToken,
-      newerThan: GMAIL_NEWER_THAN,
       maxResults: 50,
     });
   } catch (err) {
@@ -163,5 +158,4 @@ export async function backfillThreadIds(
 export const _internals = {
   MAX_CANDIDATES,
   BACKFILL_LOOKBACK,
-  GMAIL_NEWER_THAN,
 };

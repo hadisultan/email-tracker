@@ -151,7 +151,7 @@ describe('historyList', () => {
 });
 
 describe('listSentMessages', () => {
-  it('GETs /messages with q=in:sent newer_than:1d, maxResults=50, fields=messages(id,threadId) by default', async () => {
+  it('GETs /messages with labelIds=SENT, maxResults=50, fields=messages(id,threadId) by default', async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(200, {
         messages: [
@@ -170,7 +170,11 @@ describe('listSentMessages', () => {
     expect(u.origin + u.pathname).toBe(
       'https://gmail.googleapis.com/gmail/v1/users/me/messages',
     );
-    expect(u.searchParams.get('q')).toBe('in:sent newer_than:1d');
+    // Metadata scope rejects q=, so we filter by labelIds=SENT and
+    // rely on Gmail's most-recent-first ordering plus the matcher's
+    // ±5min window for time filtering.
+    expect(u.searchParams.getAll('labelIds')).toEqual(['SENT']);
+    expect(u.searchParams.get('q')).toBeNull();
     expect(u.searchParams.get('maxResults')).toBe('50');
     expect(u.searchParams.get('fields')).toBe('messages(id,threadId)');
     expect((init as RequestInit).headers).toEqual({
@@ -178,16 +182,15 @@ describe('listSentMessages', () => {
     });
   });
 
-  it('honors newerThan and maxResults overrides', async () => {
+  it('honors maxResults override', async () => {
     fetchSpy.mockResolvedValue(jsonResponse(200, { messages: [] }) as never);
     await listSentMessages({
       accessToken: ACCESS_TOKEN,
-      newerThan: '2h',
       maxResults: 10,
     });
     const [url] = fetchSpy.mock.calls[0]!;
     const u = new URL(url as string);
-    expect(u.searchParams.get('q')).toBe('in:sent newer_than:2h');
+    expect(u.searchParams.getAll('labelIds')).toEqual(['SENT']);
     expect(u.searchParams.get('maxResults')).toBe('10');
   });
 
