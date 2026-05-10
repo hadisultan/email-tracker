@@ -57,11 +57,11 @@ This bites in non-obvious places:
 ```json
 // extension/manifest.json
 {
-  "host_permissions": ["https://hadi-email-tracker.netlify.app/*"]
+  "host_permissions": ["https://your-site.netlify.app/*"]
 }
 ```
 
-This fails Netlify's secret-scan because `SITE_URL` (and any other env var with the same value) is "exposed."
+If `SITE_URL` (auto-set by Netlify) equals `https://your-site.netlify.app`, this fails the secret-scan because the env-var value appears literally in source. (And since Netlify auto-populates `SITE_URL` for every site, this fails the moment you commit.)
 
 **Good — placeholder + build substitution:**
 
