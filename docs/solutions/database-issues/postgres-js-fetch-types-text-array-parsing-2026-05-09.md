@@ -29,8 +29,8 @@ The Web Push notification body rendered as `"21 recipients — Opened just now"`
 ## Symptoms
 
 - Notification body says "21 recipients" while `SELECT array_length(recipients, 1) FROM messages WHERE id = ...` returns 1.
-- The string `"{user@example.com}"` is exactly 21 characters long, matching the bogus count.
-- `recipients` typed as `string[]` in TypeScript but at runtime is the literal string `"{user@example.com,user2@example.com}"`.
+- The displayed count exactly equals `length('{<owner-email>}')` — the character count of the wire-format string, including the braces. For our 19-character owner email, that's 21. A different email length would have produced a different bogus count.
+- `recipients` typed as `string[]` in TypeScript but at runtime is the literal string `"{owner@example.com,other@example.com}"`.
 - All unit tests pass — they construct their own `postgres()` clients without the offending option.
 
 ## What Didn't Work
@@ -88,7 +88,7 @@ function recipientLabel(recipients: string[] | string | null): string {
 
 `postgres-js` (`porsager/postgres`) ships with hard-coded support for well-known type OIDs (int, text, timestamptz, jsonb, etc.). Array types use *catalog OIDs* — the OID is allocated per element type when the table is created, so the driver can't recognize them without first reading `pg_type`. Setting `fetch_types: false` skips that read, intending to save one tiny query at cold start. The cost is that every `text[]`, `int[]`, etc. column comes back as the raw wire-format string (`'{a,b,c}'`), with no warning.
 
-`.length` on that string returns the number of characters (including `{` and `}`), not the array length — so a single-element `{user@example.com}` happens to be exactly 21 chars and produces the absurd "21 recipients" body.
+`.length` on that string returns the number of characters (including `{` and `}`), not the array length — so a single-element `{<owner-email>}` produces a count equal to `length(email) + 2`, which is what the user saw rendered as "21 recipients" in the notification body.
 
 The catalog read is one trivial query at first connect. Skipping it is rarely worth the loaded foot-gun.
 

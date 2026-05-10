@@ -83,8 +83,9 @@ if (input.proxyLabel === 'google' && input.sentAt) {
 
 ```tsx
 // dashboard — unchanged, no per-table policy code
-const FILTER_TAGS = {
-  real:   ['none', 'self_view_mobile'],
+const FILTER_TAGS: Record<Filter, string[] | null> = {
+  real: ['none', 'self_view_mobile'],
+  all: null,
   hidden: ['self_view_desktop', 'likely_prefetch'],
 };
 ```

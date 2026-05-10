@@ -68,17 +68,23 @@ This fails Netlify's secret-scan because `SITE_URL` (and any other env var with 
 ```json
 // extension/manifest.json (committed)
 {
-  "host_permissions": ["__API_BASE_HOST__/*"]
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "__API_BASE_HOST__/*"
+  ]
 }
 ```
 
 ```js
-// extension/build.mjs (committed)
-const apiBase = process.env.EMAIL_TRACKER_API_BASE ?? 'http://localhost:8888';
-const manifest = await fs.readFile('manifest.json', 'utf-8');
-await fs.writeFile(
+// extension/build.mjs (committed) — sync fs intentionally; build is a
+// straight-line script and async would only add boilerplate.
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const API_BASE = process.env.EMAIL_TRACKER_API_BASE ?? 'http://localhost:8888';
+const manifestSrc = readFileSync('manifest.json', 'utf8');
+writeFileSync(
   'dist/manifest.json',
-  manifest.replaceAll('__API_BASE_HOST__', apiBase),
+  manifestSrc.replaceAll('__API_BASE_HOST__', API_BASE),
 );
 ```
 

@@ -37,7 +37,7 @@ A Netlify V2 function (`functions/pixel.ts`) was meant to handle dynamic paths l
 
 1. **`export const config = { path: '/pixel/*' }`** — the V2 routing config docs suggested wildcards. After deploy, the function still only responded at `/.netlify/functions/pixel`. No log line at deploy time saying the route registered or didn't.
 2. **`export const config = { path: ['/pixel/:token', '/pixel'] }`** — array-of-paths form, also from the docs. Same outcome: silently registered no route.
-3. **`netlify.toml` redirect: `from = "/pixel/*", to = "/.netlify/functions/pixel/:splat"`** — the redirect itself worked (HTTP 200 from the function), but only because Netlify's redirect engine fell through to the SPA when the function didn't handle the request. The function STILL didn't see path suffixes.
+3. **`netlify.toml` redirect: `from = "/pixel/*", to = "/.netlify/functions/pixel/:splat"`** — `curl` returned HTTP 200, which looked promising. But the body was the SPA's `index.html`, not the GIF: the rewritten path `/.netlify/functions/pixel/<token>` is itself a path suffix that the function ignores, so the request fell through to the SPA fallback redirect downstream. The function never saw the request at all — the 200 was masking a failure.
 
 ## Solution
 
@@ -49,19 +49,20 @@ Use a query-parameter redirect, not a path-segment one. Drop `export const confi
   from = "/pixel/*"
   to = "/.netlify/functions/pixel?token=:splat"
   status = 200
-  force = true
 ```
 
-In the function, read the token from the query first, with a path-segment fallback for local dev / tests:
+In the function, read the token from the query first, with a path-segment fallback for `netlify dev` and unit tests (which mount the function under the legacy path directly):
 
 ```ts
-function extractToken(req: Request): string | null {
-  const url = new URL(req.url);
-  const q = url.searchParams.get('token');
-  if (q && q.length > 0) return q;
+function extractToken(url: URL): string | null {
+  const qsToken = url.searchParams.get('token');
+  if (qsToken) return qsToken;
   // Fallback for /.netlify/functions/pixel/<token> — works in dev/tests.
-  const m = url.pathname.match(/\/pixel(?:\.[a-z]+)?\/([^/?]+)$/i);
-  return m ? m[1]! : null;
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return null;
+  const last = segments[segments.length - 1]!;
+  if (!last || last === 'pixel') return null;
+  return last;
 }
 ```
 

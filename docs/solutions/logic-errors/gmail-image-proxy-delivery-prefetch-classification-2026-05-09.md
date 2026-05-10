@@ -24,7 +24,7 @@ tags:
 
 ## Problem
 
-For every email sent via Gmail, two pixel hits arrived from Google's image proxy (IPs in `66.249.0.0/16` and `74.125.0.0/16`, UA "via ggpht.com GoogleImageProxy") — one at ~+15s and another at ~+25-50s — *before* the recipient (or sender, in self-send tests) ever opened the message. The classifier left them tagged `tag='none'`, set a `notify_after` timer, and a spurious "Opened just now" Web Push fired ~90 seconds later for every single send. Real recipient opens were drowned in this noise.
+For every email sent via Gmail, two pixel hits arrived from Google's image proxy (IPs in `66.249.0.0/16` and `74.125.0.0/16`, UA "via ggpht.com GoogleImageProxy") — one at ~+15s and another within the first ~60s (observed in this project's testing; Google does not publish these intervals) — *before* the recipient (or sender, in self-send tests) ever opened the message. The classifier left them tagged `tag='none'`, set a `notify_after` timer, and a spurious "Opened just now" Web Push fired ~90 seconds later for every single send. Real recipient opens were drowned in this noise.
 
 ## Symptoms
 
@@ -72,10 +72,10 @@ export function classifyHit(input: ClassifyHitInput): PixelTag {
 
 ## Why This Works
 
-Gmail's image proxy is **not** a recipient-driven event. It runs:
+Gmail's image proxy is **not** a recipient-driven event. Observed behavior in our testing (Google does not publish exact timings):
 
-1. Immediately after delivery (a "scan" pass for spam/security checks) — typically +5-20s.
-2. A second pass within the first ~60s, often for proxy-cache warming.
+1. A first pass shortly after delivery (a "scan" pass for spam/security checks) — typically within the first ~20s.
+2. A second pass within the first ~60s, plausibly for proxy-cache warming.
 
 After that, Gmail caches the image and serves subsequent renders from cache without re-hitting the origin. So real recipient opens past +60s rarely produce another `proxy_label='google'` hit at all (and when they do, those are still legitimate signals worth surfacing — `tag='none'` flows through correctly).
 
