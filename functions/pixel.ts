@@ -157,12 +157,12 @@ export default async function pixelHandler(
   return pixelResponse();
 }
 
-// Pin the function to its public path. The token is the trailing
-// segment of the URL (parsed from req.url in `extractToken`). Two
-// patterns are registered: the parameterized `/pixel/:token` (canonical
-// happy path) and bare `/pixel` (defensive — keeps the function alive
-// for token-less requests so we still respond with the transparent GIF
-// instead of leaking a 404).
-export const config = {
-  path: ['/pixel/:token', '/pixel'],
-};
+// No `export const config` — leaving the function on its default
+// auto-mount at `/.netlify/functions/pixel`. The public `/pixel/<token>`
+// path is wired by a redirect in `netlify.toml`. We tried two V2
+// `config.path` variants ('/pixel/*' and '/pixel/:token') and neither
+// registered at deploy time on this account; the redirect-to-legacy
+// approach is the path that actually works in production. The token is
+// still parsed from the URL path via `extractToken`, which works
+// identically whether the function was reached via the redirect (which
+// preserves the `:splat` segment) or via a direct legacy URL hit.

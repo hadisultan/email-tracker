@@ -22,10 +22,15 @@
   port = 8888
   publish = "dashboard/dist"
 
-# Pixel endpoint — /pixel/<token> is owned directly by functions/pixel.ts
-# via its `export const config = { path: '/pixel/*' }`. No redirect
-# needed (and adding one would shadow the function with the SPA
-# fallback).
+# Pixel endpoint — /pixel/<token>  →  /.netlify/functions/pixel/<token>.
+# pixel.ts is intentionally left without `export const config` so it
+# stays on the default legacy auto-mount, which accepts the splat'd
+# path suffix. We tried V2 `config.path` and the route silently failed
+# to register at deploy time.
+[[redirects]]
+  from = "/pixel/*"
+  to = "/.netlify/functions/pixel/:splat"
+  status = 200
 
 # All other API surface — /api/<name>  →  functions/<name>.ts
 [[redirects]]
