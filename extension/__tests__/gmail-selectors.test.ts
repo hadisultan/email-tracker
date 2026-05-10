@@ -48,6 +48,7 @@ describe('GMAIL_SELECTORS', () => {
         'bodyEditor',
         'ccField',
         'composeDialog',
+        'recipientChip',
         'sendButton',
         'subjectInput',
         'toField',
@@ -149,5 +150,39 @@ describe('readRecipients', () => {
     const dialog = makeComposeFixture({});
     document.body.appendChild(dialog);
     expect(readRecipients(dialog)).toEqual([]);
+  });
+
+  // Modern Gmail (post-2026 rollout): committed recipients are chip
+  // elements with an `email="..."` attribute; the legacy `name="to"`
+  // input is now a value-less <div>. The selector must still find the
+  // recipient.
+  it('reads recipients from chip [email] attributes (modern Gmail)', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.innerHTML = `
+      <div name="to">
+        <span email="alice@example.com">Alice</span>
+        <span email="bob@example.com">Bob</span>
+      </div>
+      <input name="subjectbox" value="hi" />
+      <div role="textbox" aria-label="Message Body" contenteditable="true"></div>
+      <div role="button" data-tooltip="Send">Send</div>
+    `;
+    document.body.appendChild(dialog);
+    expect(readRecipients(dialog)).toEqual(['alice@example.com', 'bob@example.com']);
+  });
+
+  it('de-duplicates when a chip and a legacy input value both list the same address', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.innerHTML = `
+      <input name="to" value="alice@example.com" />
+      <span email="alice@example.com">Alice</span>
+      <input name="subjectbox" value="hi" />
+      <div role="textbox" aria-label="Message Body" contenteditable="true"></div>
+      <div role="button" data-tooltip="Send">Send</div>
+    `;
+    document.body.appendChild(dialog);
+    expect(readRecipients(dialog)).toEqual(['alice@example.com']);
   });
 });

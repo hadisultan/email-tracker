@@ -157,8 +157,8 @@ export default async function pixelHandler(
   return pixelResponse();
 }
 
-// Pin the function path so Netlify routes /.netlify/functions/pixel
-// to this module. The /pixel/:token redirect is set in netlify.toml.
+// Pin the function to its public path. The token is the trailing
+// segment of the URL (parsed from req.url in `extractToken`).
 export const config = {
-  path: '/.netlify/functions/pixel',
+  path: '/pixel/*',
 };

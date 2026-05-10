@@ -16,12 +16,19 @@ export const GMAIL_SELECTORS = {
   // localized hotkey hint, e.g. "Send ‪(⌘Enter)‬").
   sendButton: 'div[role="button"][data-tooltip^="Send"]',
 
-  // Recipient inputs. Gmail's chip-based UI keeps a `name="to"` /
-  // `name="cc"` / `name="bcc"` attribute on the underlying input, so
-  // these selectors are stable across the chip rendering.
+  // Recipient inputs and chips. Gmail's full-screen compose renders
+  // committed recipients as DOM elements with an `email="..."` attribute
+  // (the chip). The legacy `name="to"` / `name="cc"` / `name="bcc"`
+  // inputs still exist but are now `<div>` containers rather than the
+  // value-bearing inputs they once were, and the visible input
+  // (`aria-label="To recipients"`) is cleared after a chip commits.
+  // We therefore read recipients from the chip `[email]` attribute,
+  // falling back to legacy input `value` (for older Gmail variants and
+  // test fixtures).
   toField: '[name="to"]',
   ccField: '[name="cc"]',
   bccField: '[name="bcc"]',
+  recipientChip: '[email]',
 
   // Subject is a regular text input.
   subjectInput: 'input[name="subjectbox"]',
@@ -68,11 +75,33 @@ export function readSubject(dialog: HTMLElement): string {
   return input?.value ?? '';
 }
 
-// Read recipients from To/Cc/Bcc fields. Each field can hold multiple
-// addresses separated by commas; chips render as comma-joined text in
-// the underlying input value.
+// Read recipients from the compose dialog. Modern Gmail (full-screen
+// and inline) commits each recipient as a chip element with an
+// `email="..."` attribute — this is the source of truth for committed
+// addresses (the visible input is cleared after each chip).
+//
+// We additionally read legacy `name="to"`/`cc"`/`bcc"` input values for
+// the rare case where a hidden input still carries a value (some Gmail
+// rollouts, and our test fixtures), then de-duplicate.
 export function readRecipients(dialog: HTMLElement): string[] {
   const out: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return;
+    if (seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+
+  for (const chip of dialog.querySelectorAll<HTMLElement>(
+    GMAIL_SELECTORS.recipientChip,
+  )) {
+    const email = chip.getAttribute('email');
+    if (email) push(email);
+  }
+
   for (const sel of [
     GMAIL_SELECTORS.toField,
     GMAIL_SELECTORS.ccField,
@@ -80,14 +109,12 @@ export function readRecipients(dialog: HTMLElement): string[] {
   ]) {
     const fields = dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(sel);
     for (const f of fields) {
-      const v = f.value;
+      const v = (f as { value?: unknown }).value;
       if (typeof v === 'string' && v.length > 0) {
-        for (const piece of v.split(',')) {
-          const trimmed = piece.trim();
-          if (trimmed.length > 0) out.push(trimmed);
-        }
+        for (const piece of v.split(',')) push(piece);
       }
     }
   }
+
   return out;
 }

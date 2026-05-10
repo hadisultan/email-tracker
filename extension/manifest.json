@@ -7,7 +7,7 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://mail.google.com/*",
-    "http://localhost:8888/*"
+    "https://hadi-email-tracker.netlify.app/*"
   ],
   "background": {
     "service_worker": "service-worker.js",

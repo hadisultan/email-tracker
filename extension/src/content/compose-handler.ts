@@ -48,7 +48,11 @@ export interface HandleComposeSendOutput {
   mintError?: MintErrorReason;
 }
 
-const DEFAULT_TIMEOUT_MS = 2000;
+// 5s default timeout. Netlify Functions cold-starts can take 2-4s on
+// the free tier; 5s leaves a margin while still being short enough that
+// the user doesn't notice an obvious delay before Gmail's Send fires.
+// Tests pass an explicit timeoutMs to keep their runs deterministic.
+const DEFAULT_TIMEOUT_MS = 5000;
 
 export async function handleComposeSend(
   input: HandleComposeSendInput,

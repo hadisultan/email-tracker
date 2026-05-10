@@ -22,11 +22,10 @@
   port = 8888
   publish = "dashboard/dist"
 
-# Pixel endpoint — /pixel/<token>.gif  →  functions/pixel.ts
-[[redirects]]
-  from = "/pixel/*"
-  to = "/.netlify/functions/pixel/:splat"
-  status = 200
+# Pixel endpoint — /pixel/<token> is owned directly by functions/pixel.ts
+# via its `export const config = { path: '/pixel/*' }`. No redirect
+# needed (and adding one would shadow the function with the SPA
+# fallback).
 
 # All other API surface — /api/<name>  →  functions/<name>.ts
 [[redirects]]

@@ -1,16 +1,25 @@
 // Build pipeline for the email-tracker Chrome extension.
 //
-// Steps:
-//   1. tsc compiles src/ -> dist/ (mirrors directory structure;
-//      service-worker, popup/popup.js, content/gmail.js, lib/api.js,
-//      lib/config.js).
-//   2. Copy manifest.json -> dist/manifest.json.
-//   3. Copy popup.html and popup.css -> dist/popup/.
-//   4. Copy assets/icon-*.png -> dist/assets/.
+// Why bundling: Chrome MV3 content scripts run as classic scripts and
+// cannot use ES `import`/`export` syntax. Plain `tsc` emit preserves
+// module syntax, so loading the unpacked extension fails with
+// "Cannot use import statement outside a module" at the content-script
+// entry. We use esbuild to bundle each entry into a single file, with
+// the content script in IIFE format (no module syntax in the output).
+// The service worker (manifest declares `type: "module"`) and the
+// popup (`<script type="module">`) stay as ESM bundles.
 //
-// `npm run package` bundles dist/ into extension-vX.Y.Z.zip for
-// distribution to a fresh machine — see scripts/package.mjs.
+// Steps:
+//   1. tsc --noEmit for type checking only.
+//   2. esbuild bundles src/content/gmail.ts -> dist/content/gmail.js (IIFE).
+//   3. esbuild bundles src/service-worker.ts -> dist/service-worker.js (ESM).
+//   4. esbuild bundles src/popup/popup.ts -> dist/popup/popup.js (ESM).
+//   5. Copy manifest.json, popup.html, popup.css, assets/icon-*.png.
+//
+// `npm run package` zips dist/ for distribution to a fresh machine —
+// see scripts/package.mjs.
 
+import { build as esbuild } from 'esbuild';
 import { execSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -31,8 +40,47 @@ const ASSETS = resolve(HERE, 'assets');
 if (existsSync(DIST)) rmSync(DIST, { recursive: true, force: true });
 mkdirSync(DIST, { recursive: true });
 
-console.log('[build] compiling TypeScript...');
-execSync('npx tsc -p tsconfig.json', { cwd: HERE, stdio: 'inherit' });
+console.log('[build] type-checking with tsc...');
+execSync('npx tsc -p tsconfig.json --noEmit', { cwd: HERE, stdio: 'inherit' });
+
+const common = {
+  bundle: true,
+  sourcemap: true,
+  target: 'chrome120',
+  logLevel: 'warning',
+  // Build-time injection of the production API base. Source default
+  // is localhost:8888 so tests assert against that. Built bundles get
+  // the real URL spliced in here.
+  define: {
+    'globalThis.__API_BASE__': JSON.stringify(
+      process.env.EMAIL_TRACKER_API_BASE ?? 'https://hadi-email-tracker.netlify.app',
+    ),
+  },
+};
+
+console.log('[build] bundling content script (IIFE)...');
+await esbuild({
+  ...common,
+  entryPoints: [resolve(SRC, 'content/gmail.ts')],
+  outfile: resolve(DIST, 'content/gmail.js'),
+  format: 'iife',
+});
+
+console.log('[build] bundling service worker (ESM)...');
+await esbuild({
+  ...common,
+  entryPoints: [resolve(SRC, 'service-worker.ts')],
+  outfile: resolve(DIST, 'service-worker.js'),
+  format: 'esm',
+});
+
+console.log('[build] bundling popup script (ESM)...');
+await esbuild({
+  ...common,
+  entryPoints: [resolve(SRC, 'popup/popup.ts')],
+  outfile: resolve(DIST, 'popup/popup.js'),
+  format: 'esm',
+});
 
 function copyTree(srcDir, destDir, filter = () => true) {
   mkdirSync(destDir, { recursive: true });

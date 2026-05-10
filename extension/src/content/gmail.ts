@@ -40,6 +40,7 @@ import {
 import { detectSelfThreadView } from './thread-detect.js';
 import { shouldBeacon } from './beacon-handler.js';
 import { mint, beacon as beaconFn } from '../lib/api.js';
+import { buildPixelImgHtml } from './inject-pixel.js';
 
 const hookedSendButtons = new WeakSet<HTMLElement>();
 const hookedDialogs = new WeakSet<HTMLElement>();
@@ -82,6 +83,63 @@ function readThreadIdFromUrl(): string | null {
   return m && m[1] ? m[1] : null;
 }
 
+// Injects the tracking pixel `<img>` at the end of the compose body
+// editor. Uses `document.execCommand('insertHTML', ...)` so Gmail's
+// internal editor model treats the change as a user-initiated edit
+// (programmatic `innerHTML =` writes are not consistently observed by
+// Gmail's send handler before it serializes the body for outgoing
+// transmission). Falls back to a direct `innerHTML +=` write when
+// execCommand is unavailable or returns false (test environments
+// running under JSDOM, browsers without execCommand support).
+//
+// Always dispatches an `input` event afterward — Gmail listens to
+// `input` events to reconcile its internal model with the
+// contenteditable DOM, and any editor model that observes user typing
+// will update on the same signal. Yields a microtask so the model
+// reconciliation completes before the caller dispatches the synthetic
+// Send click.
+async function injectPixelIntoEditor(
+  editor: HTMLElement,
+  pixelUrl: string,
+): Promise<void> {
+  const imgHtml = buildPixelImgHtml(pixelUrl);
+  let inserted = false;
+
+  if (typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+    try {
+      editor.focus();
+      const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+      if (sel && typeof document.createRange === 'function') {
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      inserted = document.execCommand('insertHTML', false, imgHtml);
+    } catch {
+      inserted = false;
+    }
+  }
+
+  if (!inserted) {
+    editor.innerHTML = editor.innerHTML + imgHtml;
+  }
+
+  try {
+    editor.dispatchEvent(
+      new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertHTML' }),
+    );
+  } catch {
+    // InputEvent constructor unavailable — non-fatal.
+  }
+
+  // Yield once so any synchronous mutation observers / model
+  // reconciliation listeners can run before the caller fires the
+  // synthetic Send click.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 export function hookDialog(
   dialog: HTMLElement,
   opts: { mintFn?: MintFn } = {},
@@ -115,9 +173,9 @@ export function hookDialog(
         idempotencyKey: uuid(),
       };
       const result = await handleComposeSend(input);
-      if (!result.mintError) {
-        bodyEditor.innerHTML = result.newBodyHtml;
-      } else {
+      if (!result.mintError && result.pixelUrl) {
+        await injectPixelIntoEditor(bodyEditor, result.pixelUrl);
+      } else if (result.mintError) {
         console.warn(
           JSON.stringify({
             source: 'email-tracker',
