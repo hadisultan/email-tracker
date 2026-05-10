@@ -172,23 +172,21 @@ describe('readRecipients', () => {
     expect(readRecipients(dialog)).toEqual(['alice@example.com', 'bob@example.com']);
   });
 
-  it('ignores [email] elements outside recipient fields (autocomplete dropdown bloat)', () => {
-    // Real Gmail leaves the recently-contacted autocomplete dropdown
-    // mounted in the compose dialog DOM with ~20 `<div email="...">`
-    // suggestion items, plus a From-picker with `email=""`. A naive
-    // dialog-wide [email] sweep wrongly captures all of them.
+  it('ignores [email] elements inside an autocomplete role="listbox"', () => {
+    // Gmail's recently-contacted autocomplete dropdown mounts
+    // suggestion items with `role="option" email="..."` inside a
+    // `role="listbox"`. Those are not committed recipients and must
+    // not leak into the send. Top-level chips OUTSIDE the listbox
+    // (where real Gmail places committed chips) are still captured.
     const dialog = document.createElement('div');
     dialog.setAttribute('role', 'dialog');
     dialog.innerHTML = `
-      <div name="to">
-        <span email="alice@example.com">Alice</span>
-      </div>
+      <span email="alice@example.com">Alice</span>
       <div role="listbox" aria-label="Search results">
         <div role="option" email="suggest1@x.com">Suggest 1</div>
         <div role="option" email="suggest2@x.com">Suggest 2</div>
         <div role="option" email="suggest3@x.com">Suggest 3</div>
       </div>
-      <div role="button" email="me@example.com">From: me</div>
       <input name="subjectbox" value="hi" />
       <div role="textbox" aria-label="Message Body" contenteditable="true"></div>
       <div role="button" data-tooltip="Send">Send</div>

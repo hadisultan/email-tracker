@@ -95,26 +95,34 @@ export function readRecipients(dialog: HTMLElement): string[] {
     out.push(trimmed);
   };
 
-  // Scope chip lookup to within the recipient field containers. A
-  // dialog-wide `[email]` query also catches Gmail's autocomplete
-  // suggestion list (a recently-contacted dropdown that injects
-  // ~20 `<div email="...">` items into the dialog DOM and leaves them
-  // mounted) and the From-picker — both produced spurious "21
-  // recipients" minted rows in production.
+  // Read committed-chip emails from anywhere in the dialog. Real Gmail
+  // places chip elements at varying DOM depths and they are NOT
+  // consistently nested inside the legacy `[name="to"]` container, so
+  // a scoped query was empirically observed to miss them entirely
+  // (mint then rejected the empty recipients list -> no message row
+  // created -> dashboard never showed the send).
+  //
+  // The one exclusion we apply is `[role="listbox"]`: that's Gmail's
+  // autocomplete-suggestion dropdown, which can mount ~20
+  // `<div role="option" email="...">` items into the dialog DOM.
+  // Those are suggestions, not committed recipients, and must not be
+  // captured.
+  for (const chip of dialog.querySelectorAll<HTMLElement>(
+    GMAIL_SELECTORS.recipientChip,
+  )) {
+    if (chip.closest('[role="listbox"]')) continue;
+    const email = chip.getAttribute('email');
+    if (email) push(email);
+  }
+
   for (const sel of [
     GMAIL_SELECTORS.toField,
     GMAIL_SELECTORS.ccField,
     GMAIL_SELECTORS.bccField,
   ]) {
-    const fields = dialog.querySelectorAll<HTMLElement>(sel);
+    const fields = dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(sel);
     for (const f of fields) {
-      for (const chip of f.querySelectorAll<HTMLElement>(
-        GMAIL_SELECTORS.recipientChip,
-      )) {
-        const email = chip.getAttribute('email');
-        if (email) push(email);
-      }
-      const v = (f as unknown as { value?: unknown }).value;
+      const v = (f as { value?: unknown }).value;
       if (typeof v === 'string' && v.length > 0) {
         for (const piece of v.split(',')) push(piece);
       }
