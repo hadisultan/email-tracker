@@ -5,16 +5,26 @@
 //
 // Detection strategy:
 //   - Gmail uses fragment-based routing: the URL hash encodes the
-//     current view, e.g. `#sent/<thread-id>` when a thread inside the
-//     Sent label is open.
-//   - We treat `#sent/<thread-id>` as a positive match. We deliberately
-//     do NOT match `#inbox/<thread-id>` because the user could be
-//     viewing an incoming reply on a thread they previously sent — the
-//     plan calls this out as a false-positive class to avoid.
-//   - The backend `/api/beacon` validates the thread belongs to the
-//     user's own messages and silently drops foreign threads, so an
-//     occasional over-eager match is bounded to "extra round trip" and
-//     never to "wrong suppression".
+//     current view, e.g. `#sent/<thread-id>` or `#inbox/<thread-id>`
+//     when a thread is open.
+//   - We match `#sent/<id>`, `#label/sent/<id>`, AND `#inbox/<id>`.
+//     Self-sends (sender == one of the recipients, e.g. you mailing
+//     yourself) deliver to the inbox, so Gmail surfaces the URL as
+//     `#inbox/<id>` — without matching that, we'd never fire a beacon
+//     for the most common single-user testing path.
+//   - The `#inbox/<id>` match introduces a small false-positive class:
+//     a user opens an inbound reply on a thread they previously sent
+//     into BEFORE the recipient opens the message, and the recipient's
+//     subsequent pixel hit gets tagged `self_view_*` and the push is
+//     suppressed. Two reasons this is acceptable:
+//     (a) The classifier only counts beacons received within a 5-min
+//         window leading up to the hit, so a user who viewed their
+//         inbox hours ago doesn't shadow a fresh recipient open.
+//     (b) The backend `/api/beacon` endpoint independently validates
+//         ownership: only threads that have one of the caller's own
+//         messages get persisted, so an `#inbox/<id>` view of a
+//         purely-inbound thread (someone else's thread) is silently
+//         dropped without recording a beacon.
 //
 // All exports are pure: they take `Location` and (optionally) `Document`
 // inputs and return their result without touching globals.
@@ -23,12 +33,10 @@ export interface DetectedThread {
   threadId: string;
 }
 
-// Sent-label URLs Gmail uses. Multiple aliases are accepted because
-// Gmail occasionally re-skins these (`#sent/<id>` is the historical
-// form; `#label/Sent/<id>` shows up in some account configurations).
 const SENT_HASH_PATTERNS: readonly RegExp[] = [
   /^#sent\/([^/?]+)$/i,
   /^#label\/sent\/([^/?]+)$/i,
+  /^#inbox\/([^/?]+)$/i,
 ];
 
 export function detectSelfThreadView(

@@ -23,8 +23,27 @@ describe('detectSelfThreadView', () => {
     });
   });
 
-  it('returns null for #inbox/<thread-id> (incoming-reply false-positive guard)', () => {
-    expect(detectSelfThreadView({ hash: '#inbox/THREAD123' })).toBeNull();
+  it('detects #inbox/<thread-id> (self-sends and inbound-reply views)', () => {
+    // Self-sends land in the inbox so Gmail surfaces them as `#inbox/<id>`
+    // — without matching that, single-user testing never fires a beacon.
+    // The false-positive class (sender views inbound reply on an
+    // outbound thread before the recipient opens) is bounded by the
+    // classifier's 5-min beacon window and is acceptable for the
+    // single-user personal-tracker use case.
+    expect(detectSelfThreadView({ hash: '#inbox/THREAD123' })).toEqual({
+      threadId: 'THREAD123',
+    });
+    expect(detectSelfThreadView({ hash: '#INBOX/zzz' })).toEqual({
+      threadId: 'zzz',
+    });
+  });
+
+  it('detects long modern Gmail thread IDs (Qgrc... form)', () => {
+    expect(
+      detectSelfThreadView({
+        hash: '#inbox/QgrcJHrjBQfqwnMJbWkcbwkQWjRzWJtTDTQ',
+      }),
+    ).toEqual({ threadId: 'QgrcJHrjBQfqwnMJbWkcbwkQWjRzWJtTDTQ' });
   });
 
   it('returns null for arbitrary user labels', () => {
