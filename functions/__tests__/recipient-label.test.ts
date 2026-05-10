@@ -3,7 +3,7 @@ import { recipientLabel } from '../lib/notify.js';
 
 // Regression: production push body said "21 recipients" for a single-
 // recipient message because postgres-js's type catalog was disabled and
-// text[] came back as the raw wire form `'{hadiholoa@gmail.com}'`
+// text[] came back as the raw wire form `'{owner@example.com}'`
 // (length 21). recipientLabel now re-parses defensively.
 describe('recipientLabel', () => {
   it('returns the address verbatim for a single-element array', () => {
@@ -21,7 +21,7 @@ describe('recipientLabel', () => {
   });
 
   it('parses Postgres array literal string with one entry', () => {
-    expect(recipientLabel('{hadiholoa@gmail.com}')).toBe('hadiholoa@gmail.com');
+    expect(recipientLabel('{owner@example.com}')).toBe('owner@example.com');
   });
 
   it('parses Postgres array literal string with multiple entries', () => {
